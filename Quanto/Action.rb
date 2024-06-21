@@ -1,5 +1,6 @@
 require './Quanto/DataTypes.rb'
 require './Quanto/errors.rb'
+require './Quanto/other.rb'
 
 class ActionType
     attr_reader :type, :datatype
@@ -12,7 +13,7 @@ end
 class Action
     def self.AssignmentRule(varName, line, scopeInstance)
         if varName == varName.upcase and scopeInstance.vars.keys.include?varName
-            return Error.new('DefinitionError', "\"#{varName}\" already exists in this scope, you can't change this define variable value.", line)
+            return Error.new('DefinitionError', "\"#{varName}\" already exists in this scope, you can't change this variable value.", line)
         end
         letters = (65..90).map{|i| i.chr}.join('')
         letters << (97..122).map{|i| i.chr}.join('')
@@ -21,20 +22,12 @@ class Action
             letters << '_'
             varName[1..].chars.each do |n|
                 unless letters.include?n
-                    if n == '"'
-                        symbol = '\''
-                    else
-                        symbol = '"'
-                    end
+                    symbol = CreateSymbol(n)
                     return Error.new('Syntax', "You can\'t use #{symbol}#{n}#{symbol} in the variable name!", line)
                 end
             end
         else
-            if varName[0] == '"'
-                symbol = '\''
-            else
-                symbol = '"'
-            end
+            symbol = CreateSymbol(varName[0])
             return Error.new('Syntax', "You can\'t use #{symbol}#{varName[0]}#{symbol} to start a variable name.", line)
         end
     end
@@ -57,6 +50,8 @@ class Action
         # when ','
             
         # else
+        #     symbol = CreateSymbol(token)
+        #     return Error.new('Syntax', "unexpected #{symbol}#{token}#{symbol}", line)
             
         end
     end

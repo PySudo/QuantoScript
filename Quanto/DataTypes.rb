@@ -1,4 +1,5 @@
 require './Quanto/errors.rb'
+require './Quanto/other.rb'
 
 class StringType
     attr_accessor :value, :type
@@ -28,11 +29,7 @@ class ManageDataType
             stringValue = ExtractString(code)
             return StringType.new(stringValue)
         else
-            if code == '"'
-                symbol = '\''
-            else
-                symbol = '"'
-            end
+            symbol = CreateSymbol(code)
             return Error.new('Syntax', "unknown data type #{symbol}#{code}#{symbol}!", line)
         end
     end

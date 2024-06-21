@@ -1,6 +1,6 @@
 require './Quanto/errors.rb'
 require './Quanto/interpreter.rb'
-require './Quanto/builtin.rb'
+require './Quanto/other.rb'
 
 class ManageTokens
     def self.DeleteComments(lst)
