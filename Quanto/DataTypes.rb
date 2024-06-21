@@ -11,7 +11,7 @@ end
 class ManageDataType
     def self.ExtractString(code)
         string = TOKENS.GetTokens('string')[0]
-        singls = (0 ... code.length).find_all{|i| code[i] == string}
+        singls = (0 ... code.length).select{|i| code[i] == string}
         if singls.size >= 2
             first, last = singls.minmax
             stringValue = code[first+1, last-1]
