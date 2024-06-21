@@ -14,7 +14,6 @@ class ManageTokens
             outOfString = commentIndexs.select{|i| !between(first, last, i)}
             lst[i] = element[0...outOfString.sort[0]].strip
         end
-        p lst
         return lst
     end
 
@@ -31,7 +30,7 @@ class ManageTokens
                 cache = ''
             end
         end
-        out << cache if cache.strip.size >= 1
+        out << cache.strip if cache.strip.size >= 1
         return DeleteComments(out)
     end
 end
