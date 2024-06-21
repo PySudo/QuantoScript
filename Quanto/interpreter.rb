@@ -32,7 +32,6 @@ class Interpreter
         statements.each_with_index do |code, line|
             next if code[0]==TOKENS.GetTokens('comment')[0]
             tokens = ManageTokens.GetAllTokens(code)
-            next if tokens == nil
             tokens.each_with_index do |token, index|
                 if TOKENS.GetTokens.include?token
                     Action.Detect(token, index, tokens, $global, line+1)
