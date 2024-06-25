@@ -9,3 +9,5 @@ you don't need to "#" for comments (it's optional)
 but it's better to use "#" for comments...
 
 myInt = 10
+
+myList = ['Hello world', 10]

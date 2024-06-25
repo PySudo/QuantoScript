@@ -20,6 +20,16 @@ myString = 'it's a string'
 ```
 now `myString` have this value : "i use ' in string."
 
+## list
+- Currently, it does not support nested lists.
+- Syntax
+```
+[element1, element2, ...]
+```
+- Create a variable with 2 element :
+```
+myList = ['Hello world', 10]
+```
 
 # variables
 - You can store any data type in a variable.

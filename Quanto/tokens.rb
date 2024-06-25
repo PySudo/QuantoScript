@@ -17,12 +17,12 @@ class ManageTokens
         return lst
     end
 
-    def self.GetAllTokens(statement)
+    def self.GetAllTokens(statement, *a)
         cache = ''
         out = []
         isString = false
         statement.chars.each do |i|
-            unless TOKENS.GetTokens('assignment').include?i
+            unless TOKENS.GetTokens(*a).include?i
                 cache += i
             else
                 out << cache.strip if cache.strip.size >= 1

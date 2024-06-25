@@ -45,8 +45,15 @@ class Action
                 puts detectType.ShowError
                 exit 1
             end
-            scopeInstance.vars[tokens[index-1]] = detectType.value
-            return ActionType.new('Assignment', detectType.type)
+            if detectType.type == 'list'
+                scopeInstance.vars[tokens[index-1]] = []
+                detectType.value.each do |obj|
+                    scopeInstance.vars[tokens[index-1]] << obj.value
+                end
+            else
+                scopeInstance.vars[tokens[index-1]] = detectType.value
+            end
+                return ActionType.new('Assignment', detectType.type)
         # when ','
             
         # else
