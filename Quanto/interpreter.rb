@@ -30,7 +30,7 @@ $global = ManageValues.new
 class Interpreter
     def self.Execute(statements)
         statements.each_with_index do |code, line|
-            next if code[0]==TOKENS.GetTokens('comment')[0]
+            next if code.size == 0 || code[0]==TOKENS.GetTokens('comment')[0]
             tokens = ManageTokens.GetAllTokens(code)
             tokens.each_with_index do |token, index|
                 if TOKENS.GetTokens.include?token
