@@ -23,12 +23,12 @@ class Action
             varName[1..].chars.each do |n|
                 unless letters.include?n
                     symbol = CreateSymbol(n)
-                    return Error.new('Syntax', "You can\'t use #{symbol}#{n}#{symbol} in the variable name!", line)
+                    return Error.new('Syntax', "You can't use #{symbol}#{n}#{symbol} in the variable name!", line)
                 end
             end
         else
             symbol = CreateSymbol(varName[0])
-            return Error.new('Syntax', "You can\'t use #{symbol}#{varName[0]}#{symbol} to start a variable name.", line)
+            return Error.new('Syntax', "You can't use #{symbol}#{varName[0]}#{symbol} to start a variable name.", line)
         end
     end
     def self.Detect(token, index, tokens, scopeInstance, line)
