@@ -1,5 +1,5 @@
 # this is a comment
-MyStr = 'Hello 'wo#rld!'
+MyStr = 'Hello 'world!'
 
 # Define variable :
 VAR = 'you can't change this value ;)'
