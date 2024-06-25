@@ -9,6 +9,14 @@ class StringType
     end
 end
 
+class IntegerType
+    attr_accessor :value, :type
+    def initialize(integer)
+        @value = integer.to_i
+        @type = 'integer'
+    end
+end
+
 class ManageDataType
     def self.ExtractString(code)
         string = TOKENS.GetTokens('string')[0]
@@ -28,6 +36,8 @@ class ManageDataType
         if code[0] == string && code[-1] == string
             stringValue = ExtractString(code)
             return StringType.new(stringValue)
+        elsif is_int?(code)
+            return IntegerType.new(code)
         else
             symbol = CreateSymbol(code)
             return Error.new('Syntax', "unknown data type #{symbol}#{code}#{symbol}!", line)
