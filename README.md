@@ -16,7 +16,7 @@ myInt = 10
 ```
 if you want to use single quote in strings just put it in string , don't need to use \ in string , for example :
 ```
-myString = 'i use ' in string'
+myString = 'i use ' in string.'
 ```
 now `myString` have this value : "i use ' in string."
 
