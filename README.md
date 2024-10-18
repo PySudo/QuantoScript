@@ -1,5 +1,5 @@
 # QuantoScript
-- nothing for now...
+- A small programming language (for now)
 
 # DataTypes
 
