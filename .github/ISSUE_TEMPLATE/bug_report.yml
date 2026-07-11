@@ -1,0 +1,84 @@
+name: Bug report
+description: Report incorrect behavior in the interpreter, VM, compiler, or stdlib
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill in the sections below
+        so we can reproduce and fix it quickly.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: "`qs vm foo.qs` prints 3 but the interpreter prints 4…"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest QuantoScript program that triggers the bug.
+      render: qscript
+      placeholder: |
+        x = [1, 2, 3]
+        print(x[1])
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command used
+      description: How did you run it?
+      placeholder: "qs vm foo.qs   /   qs foo.qs   /   qs build foo.qs"
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Which engine?
+      options:
+        - Tree-walk interpreter (qs file.qs)
+        - Bytecode VM (qs vm / run)
+        - Native compiler (qs native / compile)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Actual output / error
+      description: Paste the full output, including any stack trace.
+      render: shell
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: QuantoScript version
+      description: Output of `qs version`.
+      placeholder: "QuantoScript 1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x86-64)
+        - Linux (ARM64)
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How did you install?
+      placeholder: "install.sh / built from source / release archive"
+    validations:
+      required: false

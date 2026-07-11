@@ -1,0 +1,1 @@
+result = sys_random_int(1, 10)

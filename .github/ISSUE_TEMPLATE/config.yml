@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/PySudo/QuantoScript/blob/main/DOCS.md
+    about: The full language reference and guides — check here before filing an issue.

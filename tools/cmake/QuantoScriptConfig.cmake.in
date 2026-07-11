@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/QuantoScriptConfigVersion.cmake")
+
+if(NOT TARGET QuantoScript::qs)
+    add_executable(QuantoScript::qs IMPORTED)
+    set_target_properties(QuantoScript::qs PROPERTIES
+        IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/qs@CMAKE_EXECUTABLE_SUFFIX@"
+    )
+endif()
+
+check_required_components(QuantoScript)

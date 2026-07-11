@@ -1,0 +1,12 @@
+Package: quantoscript
+Version: 0.1.0
+Section: devel
+Priority: optional
+Architecture: amd64
+Depends: libssl3 | libssl1.1
+Maintainer: QuantoScript Project <quanto@quantoscript.dev>
+Description: Dynamically-typed language with try/oops and bytecode VM
+ QuantoScript is a dynamically-typed interpreted language with
+ try/oops exception handling and an AST-based bytecode virtual
+ machine. It supports functions, closures, collections, and a
+ standard library for HTTP, WebSocket, and file I/O.

@@ -1,0 +1,24 @@
+# Normalize line endings on checkin; check out native by default.
+* text=auto
+
+# Shell scripts must stay LF even on Windows checkouts — install.sh is served
+# and executed verbatim.
+*.sh    text eol=lf
+Makefile text eol=lf
+*.qs    text eol=lf
+*.inc   text eol=lf
+*.c     text eol=lf
+*.h     text eol=lf
+
+# PowerShell is edited on Windows; keep CRLF.
+*.ps1   text eol=crlf
+
+# Compiled bytecode is binary.
+*.qvm   binary
+
+# Language detection (GitHub Linguist):
+#   .inc files are C sources, not PHP; count them as C.
+*.inc   linguist-language=C
+#   Treat stdlib/examples/tests as documentation so they don't skew stats.
+examples/**  linguist-documentation
+tests/**     linguist-documentation
