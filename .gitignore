@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+dist/
 cmake-build-*/
 
 # CMake generated

@@ -1,6 +1,6 @@
 name: Release
 
-# Builds self-contained binaries for every supported platform and publishes
+# Builds self-contained binaries for every platform and publishes
 # them to a GitHub Release. Trigger by pushing a version tag:
 #
 #   git tag v1.0.0 && git push origin v1.0.0
@@ -13,7 +13,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -26,90 +25,141 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
-            target: aarch64-apple-darwin
-          # NOTE: Intel macOS (x86_64-apple-darwin) is temporarily omitted —
-          # GitHub's macos-13 Intel runners are being deprecated and queue
-          # unpredictably. Intel users can build from source for now; a
-          # cross-compiled Intel binary will be added in a follow-up.
-          - os: ubuntu-22.04
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-          - os: windows-2022
+          - os: windows-latest
             target: x86_64-pc-windows-gnu
 
     steps:
       - uses: actions/checkout@v4
 
-      # ── macOS: static-link Homebrew OpenSSL ──────────────────────
-      - name: Build (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install openssl@3
-          make STATIC_SSL=1 OPENSSL_DIR="$(brew --prefix openssl@3)"
-          ./build/qs version
-
-      # ── Linux: static-link distro OpenSSL ────────────────────────
-      - name: Build (Linux)
+      # ── Dependencies ─────────────────────────────────────────────
+      - name: Install OpenSSL (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev
-          make SSL_LIBS="-l:libssl.a -l:libcrypto.a"
-          ./build/qs version
 
-      # ── Windows: MSYS2 / UCRT64, static-link OpenSSL ─────────────
-      - name: Set up MSYS2
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: brew install openssl@3
+
+      - name: Setup MSYS2 (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          msystem: MINGW64
           update: true
           install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-pkgconf
             make
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-openssl
+
+      # ── Build (statically linked) ───────────────────────────────
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: make STATIC_SSL=1 OPENSSL_DIR="$(brew --prefix openssl@3)"
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: make SSL_LIBS="-l:libssl.a -l:libcrypto.a"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
+        run: make SSL_LIBS="/mingw64/lib/libssl.a /mingw64/lib/libcrypto.a"
+
+      # ── Verify ───────────────────────────────────────────────────
+      - name: Verify binary (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: ./build/qs version
+
+      - name: Verify binary (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: ./build/qs.exe version
+
+      - name: Check binary dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
-          make SSL_LIBS="/ucrt64/lib/libssl.a /ucrt64/lib/libcrypto.a"
-          ./build/qs.exe version
+          echo "=== Dynamic library dependencies ==="
+          ldd build/qs
+          echo ""
+          echo "=== Checking for libssl/libcrypto ==="
+          if ldd build/qs | grep -qi 'ssl\|crypto'; then
+            echo "WARNING: binary dynamically links OpenSSL"
+            exit 1
+          else
+            echo "OK: binary is self-contained (no OpenSSL dynamic deps)"
+          fi
+
+      - name: Check binary dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "=== Dynamic library dependencies ==="
+          otool -L build/qs
+          echo ""
+          echo "=== Checking for OpenSSL dylib ==="
+          if otool -L build/qs | grep -qi 'openssl\|libssl\|libcrypto'; then
+            echo "WARNING: binary dynamically links OpenSSL"
+            exit 1
+          else
+            echo "OK: binary is self-contained (no OpenSSL dynamic deps)"
+          fi
+
+      - name: Check binary dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          echo "=== Dynamic library dependencies ==="
+          objdump -p build/qs.exe | grep "DLL Name" || true
+          echo ""
+          echo "=== Checking for OpenSSL DLLs ==="
+          if objdump -p build/qs.exe | grep -qi 'ssl\|crypto'; then
+            echo "WARNING: binary dynamically links OpenSSL"
+            exit 1
+          else
+            echo "OK: binary is self-contained (no OpenSSL dynamic deps)"
+          fi
 
       # ── Package ──────────────────────────────────────────────────
-      - name: Package
+      - name: Create release archive
         shell: bash
         run: |
           set -eu
+
           VERSION="${GITHUB_REF_NAME#v}"
-          case "$VERSION" in refs/*|"") VERSION="dev" ;; esac
           PKG="quantoscript-${VERSION}-${{ matrix.target }}"
-          mkdir -p "dist/$PKG/bin" "dist/$PKG/stdlib" "dist/$PKG/examples"
 
-          if [ "${{ runner.os }}" = "Windows" ]; then BIN="build/qs.exe"; else BIN="build/qs"; fi
-          cp "$BIN" "dist/$PKG/bin/"
-          cp stdlib/*.qs   "dist/$PKG/stdlib/"
-          cp examples/*.qs "dist/$PKG/examples/"
-          cp README.md CHANGELOG.md LICENSE "dist/$PKG/"
+          # Assemble package tree
+          mkdir -p "dist/$PKG/bin"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp build/qs.exe "dist/$PKG/bin/qs.exe"
+          else
+            cp build/qs     "dist/$PKG/bin/qs"
+          fi
+          cp -R stdlib   "dist/$PKG/stdlib"
+          cp -R examples "dist/$PKG/examples"
+          cp LICENSE README.md "dist/$PKG/"
 
+          # Create archive
           cd dist
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a "${PKG}.zip" "$PKG" >/dev/null
-            certutil -hashfile "${PKG}.zip" SHA256 | sed -n '2p' | tr -d ' \r' > "${PKG}.zip.sha256.tmp"
-            echo "$(cat ${PKG}.zip.sha256.tmp)  ${PKG}.zip" > "${PKG}.zip.sha256"
-            rm -f "${PKG}.zip.sha256.tmp"
           else
             tar czf "${PKG}.tar.gz" "$PKG"
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
-            else
-              shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
-            fi
           fi
+
+          # Generate SHA256 checksum (sha256sum is available on all runners)
+          ASSET=$(ls "${PKG}.tar.gz" "${PKG}.zip" 2>/dev/null | head -1)
+          sha256sum "$ASSET" > "${ASSET}.sha256"
+          echo "=== Packaged ==="
           ls -la
 
+      # ── Upload artifacts ─────────────────────────────────────────
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -124,9 +174,7 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
-    # Publish even if some platform legs failed, so a release still ships with
-    # whatever binaries built successfully. Only runs for tag pushes.
-    if: always() && startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -134,14 +182,16 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Combine checksums
+      - name: List release assets
         run: |
-          cd dist
-          cat *.sha256 > SHA256SUMS.txt 2>/dev/null || true
-          echo "=== artifacts ==="
-          ls -la
-          echo "=== SHA256SUMS.txt ==="
-          cat SHA256SUMS.txt 2>/dev/null || echo "(none)"
+          echo "=== All release assets ==="
+          ls -la dist/
+          echo ""
+          echo "=== SHA256 checksums ==="
+          for f in dist/*.sha256; do
+            echo "--- $f ---"
+            cat "$f"
+          done
 
       - name: Fail if nothing built
         run: |
@@ -157,4 +207,4 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
-            dist/SHA256SUMS.txt
+            dist/*.sha256
