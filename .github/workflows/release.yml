@@ -154,7 +154,11 @@ jobs:
           fi
 
           # Generate SHA256 checksum
-          ASSET=$(ls "${PKG}.tar.gz" "${PKG}.zip" 2>/dev/null | head -1)
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ASSET="${PKG}.zip"
+          else
+            ASSET="${PKG}.tar.gz"
+          fi
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$ASSET" > "${ASSET}.sha256"
           else
