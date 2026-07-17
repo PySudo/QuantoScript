@@ -1,5 +1,8 @@
 # QuantoScript Language Reference
 
+> **Version:** 1.0.0  
+> **Written in:** C99 (single-file amalgamation with dual execution engine)
+
 Complete documentation for the QuantoScript scripting language — a small, readable language with a tree-walk interpreter *and* a bytecode VM.
 
 ---
@@ -14,22 +17,24 @@ Complete documentation for the QuantoScript scripting language — a small, read
 6. [Operators](#operators)
 7. [Control Flow](#control-flow)
 8. [Functions](#functions)
-9. [Lambda Expressions](#lambda-expressions)
+9. [Lambda Expressions & Closures](#lambda-expressions--closures)
 10. [Classes](#classes)
 11. [Collections](#collections)
-12. [String Methods](#string-methods)
-13. [Built-in Functions](#built-in-functions)
-14. [Exception Handling (try / oops)](#exception-handling-try--oops)
-15. [Imports & Modules](#imports--modules)
-16. [Standard Library](#standard-library)
-17. [Execution Engines](#execution-engines)
-18. [Bytecode VM & QVM Format](#bytecode-vm--qvm-format)
-19. [Native C Compiler](#native-c-compiler)
-20. [CLI Reference](#cli-reference)
-21. [REPL (Interactive Mode)](#repl-interactive-mode)
-22. [Package Manager](#package-manager)
-23. [Known Limitations](#known-limitations)
-24. [Common Errors & Debugging](#common-errors--debugging)
+12. [String Methods & f-strings](#string-methods--f-strings)
+13. [List Comprehensions](#list-comprehensions)
+14. [Built-in Functions](#built-in-functions)
+15. [Exception Handling (try / oops)](#exception-handling-try--oops)
+16. [Imports & Modules](#imports--modules)
+17. [Standard Library](#standard-library)
+18. [Async / Task System](#async--task-system)
+19. [Execution Engines](#execution-engines)
+20. [Bytecode VM & QVM Format](#bytecode-vm--qvm-format)
+21. [Native C Compiler](#native-c-compiler)
+22. [CLI Reference](#cli-reference)
+23. [REPL (Interactive Mode)](#repl-interactive-mode)
+24. [Package Manager](#package-manager)
+25. [Known Limitations](#known-limitations)
+26. [Common Errors & Debugging](#common-errors--debugging)
 
 ---
 
@@ -41,10 +46,10 @@ Complete documentation for the QuantoScript scripting language — a small, read
 
 | Principle | Meaning |
 |-----------|---------|
-| **Readability first** | Inspired by Python's clarity, but with braces and more English-like keywords |
+| **Readability first** | Python-like clarity, but with braces and more English-like keywords (`maybe`, `oops`) |
 | **No significant whitespace** | Blocks are delimited with `{ }` — no indentation errors |
 | **Dual engine** | Same code runs identically on the interpreter and the bytecode VM |
-| **Predictable semantics** | 1-based indexing, shared object identity (reference semantics) |
+| **Feature-rich** | Closures, comprehensions, f-strings, default args, `*args`/`**kwargs` |
 | **Self-contained** | Single-file C99 build — easy to compile, vendor, or embed |
 
 ### QuantoScript at a Glance
@@ -53,40 +58,44 @@ Complete documentation for the QuantoScript scripting language — a small, read
 # This is a comment
 print("Hello, World!")
 
-name = "QuantoScript"
-print("Welcome to", name)
-
 # Fibonacci
 func fibonacci(n) {
-    if n <= 1 {
-        return n
-    }
+    if n <= 1 { return n }
     return fibonacci(n - 1) + fibonacci(n - 2)
 }
 print(fibonacci(10))  # 55
 
-# Lambda
-double = fn(x) -> x * 2
-print(double(5))      # 10
+# Lambda with closure
+make_adder = fn(base) -> fn(x) -> base + x
+add5 = make_adder(5)
+print(add5(3))  # 8
 
 # Class
 class Person {
-    init(name) {
+    init(name, age=0) {
         self.name = name
+        self.age = age
     }
-    greet() {
-        print("Hi, I'm " + self.name)
-    }
+    greet() { print("Hi, I'm " + self.name) }
 }
-p = Person("Alice")
-p.greet()             # Hi, I'm Alice
+p = Person("Alice", 25)
+p.greet()
 
-# Exception handling
-try {
-    print(10 / 0)
-} oops e {
-    print("caught: " + e)
+# f-strings
+name = "QS"
+print(f"Hello {name}!")
+
+# List comprehension
+squares = [x * x for x in range(5)]
+print(squares)  # [1, 4, 9, 16, 25]
+
+# *args / **kwargs
+func show(first, *rest, **info) {
+    print("first:", first)
+    print("rest:", rest)
+    print("info:", info)
 }
+show("a", "b", "c", age=10, city="Tehran")
 ```
 
 ---
@@ -94,8 +103,6 @@ try {
 ## Installation
 
 ### One-Line Installer (Recommended)
-
-The fastest way to get QuantoScript is a prebuilt binary — no compiler required.
 
 **macOS / Linux:**
 ```bash
@@ -107,40 +114,31 @@ curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh
 irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1 | iex
 ```
 
-Then open a new terminal and run:
-```bash
-qs --help
-```
+Then open a new terminal and run `qs --help`.
 
 ### Installer Options
 
 **macOS / Linux:**
 ```bash
-# Install a specific version
-curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 1.0.0
-
-# Custom install prefix (default: ~/.quanto)
+# Specific version
+curl -fsSL .../install.sh | sh -s -- --version 1.0.0
+# Custom install prefix
 QUANTO_INSTALL="$HOME/.local" curl -fsSL .../install.sh | sh
-
-# Don't modify your shell profile
+# Don't modify shell profile
 NO_MODIFY_PATH=1 curl -fsSL .../install.sh | sh
-
 # Uninstall
-curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --uninstall
+curl -fsSL .../install.sh | sh -s -- --uninstall
 ```
 
 **Windows:**
 ```powershell
-# Install a specific version
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.0.0
-
-# Uninstall
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Uninstall
+& ([scriptblock]::Create((irm .../install.ps1))) -Version 1.0.0
+& ([scriptblock]::Create((irm .../install.ps1))) -Uninstall
 ```
 
 ### Building from Source
 
-Prerequisites: a C compiler (gcc/clang) and OpenSSL.
+Requires a C compiler (gcc/clang) and OpenSSL.
 
 **macOS:**
 ```bash
@@ -164,7 +162,7 @@ gcc -std=c99 -O2 -Isrc src/quanto.c -o qs.exe \
 **Or with Makefile:**
 ```bash
 make          # build build/qs
-make test     # build and run the regression suite
+make test     # build and run regression suite
 make clean    # remove build artifacts
 ```
 
@@ -173,14 +171,12 @@ make clean    # remove build artifacts
 ## Quick Start
 
 ```bash
-qs examples/full_tour.qs   # run a script with the interpreter
-qs vm examples/full_tour.qs # run with the bytecode VM
-qs                          # drop into the REPL
+qs examples/full_tour.qs   # run with interpreter
+qs vm examples/full_tour.qs # run with bytecode VM
+qs                          # enter REPL
 ```
 
-### Your First Program
-
-Create `hello.qs`:
+### Hello World
 
 ```qscript
 print("Hello, World!")
@@ -193,21 +189,11 @@ print(greet("QuantoScript"))
 print(greet("Ali"))
 ```
 
-Run it:
-
 ```bash
 qs hello.qs
 # Hello, World!
 # Hello, QuantoScript!
 # Hello, Ali!
-```
-
-### Running with Different Engines
-
-```bash
-qs hello.qs         # tree-walk interpreter (development)
-qs vm hello.qs      # bytecode VM (faster)
-qs native hello.qs  # compile to C native (arithmetic code only)
 ```
 
 ---
@@ -216,17 +202,12 @@ qs native hello.qs  # compile to C native (arithmetic code only)
 
 ### Basic Syntax
 
-QuantoScript uses braces `{ }` for blocks. Comments start with `#`. Statements are separated by newlines.
+Blocks are delimited by `{ }`. Comments start with `#`. Statements are separated by newlines.
 
 ```qscript
 # This is a comment
 x = 42
 print(x)
-
-# Multi-line with braces
-func add(a, b) {
-    return a + b
-}
 ```
 
 ### Keywords
@@ -243,19 +224,15 @@ from      fn
 | Keyword | Meaning | Example |
 |---------|---------|---------|
 | `maybe` | `else if` | `if x > 10 { ... } maybe x > 5 { ... }` |
-| `oops` | `raise` / `except` | `oops("error")` / `} oops e {` |
-| `self` | `this` (reference to current object) | `self.name = "Ali"` |
+| `oops` | `raise` / `except` | `oops("error")` / `} oops e { ... }` |
+| `self` | `this` (reference to current object) | `self.name = "Alice"` |
 | `func` | Function definition | `func add(a, b) { ... }` |
 | `fn` | Lambda expression | `fn(x) -> x * 2` |
 | `repeat` | Counted loop | `repeat 5 { ... }` |
 
 ### File Loading
 
-The file loader automatically merges multi-line constructs into single logical lines until all brace/parenthesis/bracket depth counters reach zero. This means:
-
-- Class definitions become one logical line
-- Function bodies become one logical line
-- **Recommended:** Write one statement per line in method bodies
+The file loader merges multi-line constructs until all brace/paren/bracket depths reach zero. Class definitions, function bodies, and control flow blocks become single logical lines. Recommended: one statement per line inside method bodies.
 
 ---
 
@@ -287,13 +264,12 @@ nothing = null    # null
 
 ### 1-based Indexing
 
-Lists and strings use **1-based** indexing (not 0):
+Lists and strings use **1-based** indexing:
 
 ```qscript
 items = [10, 20, 30]
 print(items[1])   # 10
 print(items[2])   # 20
-print(items[3])   # 30
 print(items[-1])  # 30 (last element)
 
 s = "hello"
@@ -303,7 +279,7 @@ print(s[-1])      # o
 
 ### Slicing
 
-Python-like slicing (but 1-based):
+Python-like slicing (1-based):
 
 ```qscript
 items = [10, 20, 30, 40, 50]
@@ -314,8 +290,8 @@ print(items[-2:])    # [40, 50]
 
 ### Escape Sequences
 
-| Sequence | Decoded Value | Example |
-|----------|---------------|---------|
+| Sequence | Decoded | Example |
+|----------|---------|---------|
 | `\n` | Newline | `"hello\nworld"` |
 | `\r` | Carriage return | `"a\rb"` |
 | `\t` | Tab | `"col1\tcol2"` |
@@ -324,21 +300,19 @@ print(items[-2:])    # [40, 50]
 | `\'` | Single quote | `"it's"` |
 | `\0` | Null byte | `"abc\0def"` |
 
-```qscript
-print("hello\nworld")   # outputs two lines
-print("tab\there")      # tab between words
-print("path\\to\\file") # path\to\file
-```
+### Type Annotations & isinstance
 
-Invalid escape sequences (e.g., `\q`) are preserved as literal characters.
-
-### Null
+Parameters can have type annotations **enforced at runtime**:
 
 ```qscript
-x = null
-if x == null {
-    print("x is null")
-}
+func greet(name:string) { print("Hello, " + name) }
+
+# Union types
+func process(x:int|string) { print(x) }
+
+# Runtime check
+print(isinstance(42, "int"))      # true
+print(isinstance("hi", "string")) # true
 ```
 
 ---
@@ -349,55 +323,41 @@ if x == null {
 
 | Operator | Description | Example | Result |
 |----------|-------------|---------|--------|
-| `+` | Addition / string concatenation | `3 + 4` | `7` |
+| `+` | Addition / string concat | `3 + 4` | `7` |
 | `-` | Subtraction | `10 - 3` | `7` |
 | `*` | Multiplication | `3 * 4` | `12` |
 | `/` | Integer division | `10 / 3` | `3` |
-| `%` | Modulo (remainder) | `10 % 3` | `1` |
+| `%` | Modulo | `10 % 3` | `1` |
 
 ### Comparison
 
-| Operator | Description |
-|----------|-------------|
-| `==` | Equal |
-| `!=` | Not equal |
-| `<` | Less than |
-| `>` | Greater than |
-| `<=` | Less or equal |
-| `>=` | Greater or equal |
+`==` `!=` `<` `>` `<=` `>=`
 
 ### Logical
 
 | Operator | Description | Notes |
 |----------|-------------|-------|
-| `and` | Logical AND | Works everywhere |
-| `or` | Logical OR | Works everywhere |
-| `not` | Logical NOT | Works everywhere |
-| `!` | Logical NOT (alias) | Works everywhere |
+| `and` | Logical AND | |
+| `or` | Logical OR | |
+| `not` / `!` | Logical NOT | Both forms work everywhere |
+| `in` | Membership | `"x" in list` / `"sub" in string` |
 
-> **Note:** `||` and `&&` are **not implemented**. Use `or` and `and` instead.
+> **Note:** `||` and `&&` are not implemented. Use `or` and `and` instead.
 
 ### Compound Assignment
 
 ```qscript
 x = 10
-x += 5   # x = 15
-x -= 3   # x = 12
-x *= 2   # x = 24
-x /= 4   # x = 6
-x %= 4   # x = 2
+x += 5   # 15
+x -= 3   # 12
+x *= 2   # 24
+x /= 4   # 6
+x %= 4   # 2
 ```
 
-### Operator Precedence (Low to High)
+### Operator Precedence (low to high)
 
-| Level | Operators |
-|-------|-----------|
-| 1 (lowest) | `or` |
-| 2 | `and` |
-| 3 | `==`, `!=`, `<`, `>`, `<=`, `>=` |
-| 4 | `+`, `-` |
-| 5 | `*`, `/`, `%` |
-| 6 (highest) | `not`, `!`, unary `-` |
+`or` → `and` → `==` `!=` `<` `>` `<=` `>=` → `+` `-` → `*` `/` `%` → `not` `!` unary `-`
 
 ---
 
@@ -405,12 +365,10 @@ x %= 4   # x = 2
 
 ### if / maybe / else
 
-`maybe` is QuantoScript's `elif`:
-
 ```qscript
 if x > 10 {
     print("big")
-} maybe x > 5 {       # "maybe" = "else if"
+} maybe x > 5 {       # "maybe" replaces "elif"
     print("medium")
 } else {
     print("small")
@@ -425,31 +383,21 @@ while i < 5 {
     print(i)
     i = i + 1
 }
-# 0 1 2 3 4
 ```
 
 ### repeat
 
-Counted loop — similar to `for` in other languages:
+Counted loop:
 
 ```qscript
 # Fixed count
-repeat 5 {
-    print("hello")
-}
+repeat 5 { print("hello") }
 
 # With index variable
-repeat i -> 5 {
-    print(i)
-}
-# 1 2 3 4 5
+repeat i -> 5 { print(i) }   # 1 2 3 4 5
 
 # Over list items
-items = ["a", "b", "c"]
-repeat item -> items {
-    print(item)
-}
-# a b c
+repeat item -> ["a", "b", "c"] { print(item) }
 ```
 
 ### break / continue
@@ -457,35 +405,12 @@ repeat item -> items {
 ```qscript
 i = 0
 while i < 10 {
-    if i == 5 {
-        break
-    }
-    if i == 2 {
-        i = i + 1
-        continue
-    }
+    if i == 5 { break }
+    if i == 2 { i += 1; continue }
     print(i)
-    i = i + 1
+    i += 1
 }
 # 0 1 3 4
-```
-
-> **Note:** `break` and `continue` inside single-line blocks may fail due to file loader line merging. Use multi-line syntax.
-
-### `in` Operator
-
-Check membership in a list or substring in a string:
-
-```qscript
-names = ["Ali", "Sara", "Mina"]
-if "Sara" in names {
-    print("found!")
-}
-
-text = "hello world"
-if "world" in text {
-    print("substring found!")
-}
 ```
 
 ---
@@ -499,101 +424,97 @@ func add(a, b) {
     return a + b
 }
 
-# With type annotations
+# Type annotations
 func add(x:int, y:int) -> int {
     return x + y
 }
 
-# Union type
-func process(x:string|int) {
-    print(x)
+# Union type parameter
+func process(x:string|int) { print(x) }
+```
+
+### Default Parameters
+
+```qscript
+func say(text:string, ending:string=" world") {
+    return text + ending
+}
+print(say("hello"))          # hello world
+print(say("hello", " QS"))   # hello QS
+```
+
+### Rest Parameters (*args)
+
+Capture extra positional arguments as a list:
+
+```qscript
+func collect(first, *rest) {
+    print("first:", first)
+    print("rest:", rest)
+}
+collect("a", "b", "c", "d")
+# first: a
+# rest: [b, c, d]
+```
+
+### Keyword Arguments (**kwargs)
+
+Capture named arguments as a map:
+
+```qscript
+func profile(name:string, **info) {
+    print("name:", name)
+    print("age:", info["age"])
+    print("city:", info["city"])
+}
+profile("Sara", age=20, city="Tehran")
+# name: Sara
+# age: 20
+# city: Tehran
+```
+
+### Mixed Parameters
+
+All four types can be combined:
+
+```qscript
+func show(name, *items, count:int=10, **extra) {
+    print(name, items, count, extra)
 }
 ```
 
-### Parameters
+**Rules:**
+- Default parameters must come after non-default ones
+- `*args` and `**kwargs` cannot have defaults
+- `**kwargs` must come last
 
-| Feature | Status |
-|---------|--------|
-| Multiple parameters | ✅ Supported |
-| Type annotations (`name:type`) | ✅ Enforced at runtime |
-| Union types (`string\|int`) | ✅ Supported |
-| Default values | ❌ Not supported |
-| Rest parameters (`*args`) | ❌ Not supported |
-| Named arguments (`**kwargs`) | ❌ Not supported |
-| Return type enforcement | ❌ Parsed but not enforced (metadata only) |
+### ever_return
 
-### Type Annotations
-
-Type annotations on function and lambda parameters are **enforced at runtime**. A type mismatch raises an error.
-
-**Supported types:** `int`, `float`, `string`, `bool`, `list`, `map`, `null`, `any`
-
-**Union types** with `|`:
+Built-in function to check if a function can return a value:
 
 ```qscript
-func add(x:int, y:int) {
-    return x + y
-}
-add(3, 4)     # OK
-add("a", 4)   # Error: argument 'x' has the wrong type
+func gives_number() { return 2 }
+func gives_null() {}
+func stops() { exit() }
 
-func greet(x:string|int) {
-    return str(x)
-}
-greet(42)      # OK (matches int)
-greet("hi")    # OK (matches string)
-```
-
-**Untyped parameters** accept any value (no annotation = `any`).
-
-**isinstance()** performs runtime type checking:
-
-```qscript
-assert_eq(isinstance(42, "int"), true)
-assert_eq(isinstance(42, "string"), false)
+print(ever_return(gives_number))  # true
+print(ever_return(gives_null))    # true
+print(ever_return(stops))         # false (exit never returns)
 ```
 
 ### Recursion
 
 ```qscript
 func factorial(n) {
-    if n <= 1 {
-        return 1
-    }
+    if n <= 1 { return 1 }
     return n * factorial(n - 1)
 }
 print(factorial(5))  # 120
-
-func fibonacci(n) {
-    if n <= 1 {
-        return n
-    }
-    return fibonacci(n - 1) + fibonacci(n - 2)
-}
-print(fibonacci(10))  # 55
-```
-
-**Note:** Recursive `if` blocks must use multi-line syntax.
-
-### Return Values
-
-```qscript
-func get_name() {
-    return "Alice"
-}
-
-name = get_name()
-
-# Functions without return yield null
-func just_print() {
-    print("hi")
-}
-result = just_print()  # result = null
 ```
 
 ---
 
-## Lambda Expressions
+## Lambda Expressions & Closures
 
 ### Basic Syntax
 
@@ -603,61 +524,71 @@ print(double(5))  # 10
 
 add = fn(a, b) -> a + b
 print(add(3, 4))  # 7
+```
 
-# With type annotation
-double = fn(x:int) -> x * 2
+### Closures (Working!)
+
+Lambdas **capture outer variables** — closures work in v1.0.0:
+
+```qscript
+make_adder = fn(base) -> fn(x) -> base + x
+add5 = make_adder(5)
+add10 = make_adder(10)
+
+print(add5(3))   # 8
+print(add10(3))  # 13
+
+# Counter closure
+make_counter = fn() -> {
+    count = 0
+    return fn() -> { count = count + 1; return count }
+}
+counter = make_counter()
+print(counter())  # 1
+print(counter())  # 2
+print(counter())  # 3
 ```
 
 ### Lambda with Collections
 
 ```qscript
-# map
-doubled = [1, 2, 3].map(fn(x) -> x * 2)
-print(doubled)  # [2, 4, 6]
-
-# filter
-evens = [1, 2, 3, 4, 5].filter(fn(x) -> x % 2 == 0)
-print(evens)  # [2, 4]
+doubled = [1, 2, 3].map(fn(x) -> x * 2)         # [2, 4, 6]
+evens = [1, 2, 3, 4].filter(fn(x) -> x % 2 == 0) # [2, 4]
 ```
 
-### Lambda Limitations
+### Type Annotations in Lambdas
 
-| Limitation | Description |
-|------------|-------------|
-| **No closures** | Lambdas cannot capture outer variables in v1.0.0 |
-| **Single expression only** | Lambda body is `-> expr` only, no multi-line body |
+```qscript
+double = fn(x:int) -> x * 2
+double("hi")  # Error: argument 'x' has wrong type
+```
 
 ---
 
 ## Classes
 
-### Definition
+### Definition & Instantiation
 
 ```qscript
 class Person {
-    init(name) {
+    init(name, age=0) {
         self.name = name
+        self.age = age
     }
-    greet() {
-        print("Hi, I am " + self.name)
-    }
+    greet() { print("Hi, I'm " + self.name) }
 }
-```
 
-### Instantiation
-
-```qscript
-p = Person("Alice")
-p.greet()  # Hi, I am Alice
+p = Person("Alice", 25)
+p.greet()  # Hi, I'm Alice
 ```
 
 ### Constructor (init)
 
-The `init` method is the constructor. Arguments passed to `ClassName(args)` are forwarded to `init`.
+The `init` method is the constructor. It can have default parameters:
 
 ```qscript
 class Point {
-    init(x, y) {
+    init(x=0, y=0) {
         self.x = x
         self.y = y
     }
@@ -670,42 +601,48 @@ print(p.x)  # 3
 
 ```qscript
 class Counter {
-    init() {
-        self.count = 0
-    }
-    inc() {
-        self.count = self.count + 1
-    }
-    get() {
-        return self.count
-    }
+    init() { self.count = 0 }
+    inc()  { self.count += 1 }
+    get()  { return self.count }
 }
 c = Counter()
-c.inc()
-c.inc()
+c.inc(); c.inc()
 print(c.get())  # 2
 ```
 
-### Object Identity
+### Object Identity (Reference Semantics)
 
-Objects use **shared identity** (reference semantics):
+Assigning an object does NOT copy it — both variables reference the same object:
 
 ```qscript
 a = Person("Bob")
-b = a          # b references the SAME object as a
+b = a
 b.name = "Charlie"
 print(a.name)  # Charlie (changed!)
 ```
 
+### Type Annotations in Methods
+
+```qscript
+class Calculator {
+    init() { self.result = 0 }
+    add(x:int) { self.result += x }
+    get_result() -> int { return self.result }
+}
+```
+
 ### Class Limitations
 
-| Limitation | Description |
-|------------|-------------|
-| **No inheritance** | No `extends`, `super`, or `parent` |
-| **No interfaces** | No abstract methods or contracts |
-| **No operator overloading** | Operators cannot be customized for classes |
-| **Method bodies** | Must use multi-line syntax |
-| **No static methods** | All methods require an instance |
+| Feature | Status |
+|---------|--------|
+| Constructor (init) | ✅ With default params |
+| self | ✅ |
+| Type annotations | ✅ Enforced |
+| Reference semantics | ✅ |
+| Inheritance | ❌ No `extends`/`super` |
+| Static methods | ❌ All methods require instance |
+| Interfaces | ❌ |
+| Operator overloading | ❌ |
 
 ---
 
@@ -713,18 +650,11 @@ print(a.name)  # Charlie (changed!)
 
 ### Lists
 
-Ordered collections of values.
-
 ```qscript
 nums = [3, 1, 4, 1, 5]
-mixed = ["hello", 42, true, null, [1, 2]]
-
-# Indexing (1-based)
-print(nums[1])     # 3
-print(nums[-1])    # 5
-
-# Slicing
-print(nums[2:4])   # [1, 4]
+print(nums[1])   # 3 (1-based)
+print(nums[-1])  # 5
+print(nums[2:4]) # [1, 4]
 ```
 
 #### List Methods
@@ -733,23 +663,21 @@ print(nums[2:4])   # [1, 4]
 |--------|-------------|---------|--------|
 | `len()` | Number of elements | `[1,2,3].len()` | `3` |
 | `push(value)` | Add to end | `[1,2].push(3)` | `[1,2,3]` |
-| `append(value)` | Add to end (alias for push) | `[1,2].append(3)` | `[1,2,3]` |
-| `pop()` | Remove and return last element | `[1,2,3].pop()` | `3` |
-| `contains(value)` | Check if value exists | `[1,2,3].contains(2)` | `true` |
-| `index(value)` | Index of first occurrence | `[1,2,3].index(2)` | `2` |
-| `remove(value)` | Remove first occurrence | `[1,2,3].remove(2)` | `[1,3]` |
-| `sort()` | Sort in place | `[3,1,2].sort()` | `[1,2,3]` |
-| `extend(list)` | Add all elements from another list | `[1,2].extend([3,4])` | `[1,2,3,4]` |
-| `flatten()` | Flatten nested lists | `[[1,2],[3]].flatten()` | `[1,2,3]` |
-| `sum()` | Sum of numeric elements | `[1,2,3].sum()` | `6` |
-| `find(fn)` | Find first element matching predicate | `[1,2,3].find(fn(x)->x>1)` | `2` |
-| `filter(fn)` | Filter elements with predicate | `[1,2,3].filter(fn(x)->x>1)` | `[2,3]` |
-| `map(fn)` | Transform each element | `[1,2,3].map(fn(x)->x*2)` | `[2,4,6]` |
-| `find_type(type)` | Find first element of given type | `[1,"a",2].find_type("string")` | `"a"` |
+| `append(value)` | Add to end (alias) | `[1,2].append(3)` | `[1,2,3]` |
+| `pop()` | Remove & return last | `[1,2,3].pop()` | `3` |
+| `contains(value)` | Check existence | `[1,2,3].contains(2)` | `true` |
+| `index(value)` | Index of first | `[1,2,3].index(2)` | `2` |
+| `remove(value)` | Remove first | `[1,2,3].remove(2)` | `[1,3]` |
+| `sort()` | Sort | `[3,1,2].sort()` | `[1,2,3]` |
+| `extend(list)` | Add multiple | `[1,2].extend([3,4])` | `[1,2,3,4]` |
+| `flatten()` | Flatten nested | `[[1,2],[3]].flatten()` | `[1,2,3]` |
+| `sum()` | Sum numbers | `[1,2,3].sum()` | `6` |
+| `find(fn)` | Find first matching | `[1,2,3].find(fn(x)->x>1)` | `2` |
+| `filter(fn)` | Filter | `[1,2,3].filter(fn(x)->x>1)` | `[2,3]` |
+| `map(fn)` | Transform each | `[1,2,3].map(fn(x)->x*2)` | `[2,4,6]` |
+| `find_type(type)` | Find by type | `[1,"a",2].find_type("string")` | `"a"` |
 
 ### Maps (Dictionaries)
-
-Key-value pairs.
 
 ```qscript
 user = {"name": "QS", "version": 1}
@@ -765,42 +693,85 @@ user["author"] = "PySudo"
 | `keys()` | List of keys | `user.keys()` | `["name", "version"]` |
 | `values()` | List of values | `user.values()` | `["QS", 1]` |
 | `items()` | List of [key, value] pairs | `user.items()` | `[["name","QS"], ["version",1]]` |
-| `has(key)` | Check if key exists | `user.has("name")` | `true` |
+| `has(key)` | Check key existence | `user.has("name")` | `true` |
 | `remove(key)` | Remove a key | `user.remove("name")` | — |
-| `len()` | Number of entries | `user.len()` | `3` |
+| `len()` | Number of entries | `user.len()` | `2` |
 
 ---
 
-## String Methods
+## String Methods & f-strings
 
 ### Built-in String Methods
 
 | Method | Description | Example | Result |
 |--------|-------------|---------|--------|
-| `upper()` | Convert to uppercase | `"hello".upper()` | `"HELLO"` |
-| `lower()` | Convert to lowercase | `"HELLO".lower()` | `"hello"` |
-| `title()` | Capitalize first letter of each word | `"hello world".title()` | `"Hello World"` |
-| `len()` | String length | `"hello".len()` | `5` |
-| `contains(s)` | Check substring | `"hello".contains("el")` | `true` |
-| `replace(old, new)` | Replace substring | `"hi".replace("i", "ello")` | `"hello"` |
-| `startsWith(s)` | Check start of string | `"hello".startsWith("he")` | `true` |
-| `endsWith(s)` | Check end of string | `"hello".endsWith("lo")` | `true` |
-| `split(sep)` | Split into list | `"a,b,c".split(",")` | `["a", "b", "c"]` |
+| `upper()` | Uppercase | `"hello".upper()` | `"HELLO"` |
+| `lower()` | Lowercase | `"HELLO".lower()` | `"hello"` |
+| `title()` | Title case | `"hello world".title()` | `"Hello World"` |
+| `len()` | Length | `"hello".len()` | `5` |
+| `contains(s)` | Substring check | `"hello".contains("el")` | `true` |
+| `replace(old, new)` | Replace | `"hi".replace("i", "ello")` | `"hello"` |
+| `startsWith(s)` | Prefix check | `"hello".startsWith("he")` | `true` |
+| `endsWith(s)` | Suffix check | `"hello".endsWith("lo")` | `true` |
+| `split(sep)` | Split to list | `"a,b,c".split(",")` | `["a", "b", "c"]` |
 
-### Examples
+### f-strings (String Interpolation)
+
+QuantoScript supports **f-strings** — embed expressions directly in strings:
 
 ```qscript
-s = "hello world"
-print(s.contains("world"))        # true
-print(s.replace("world", "QS"))   # hello QS
-print(s.startsWith("hello"))      # true
-print(s.endsWith("world"))        # true
-print(s.title())                  # Hello World
-print(s.upper())                  # HELLO WORLD
-print("a,b,c".split(","))         # ["a", "b", "c"]
-print(len(s))                     # 11
-print(s[1])                       # h
-print(s[-1])                      # d
+name = "QS"
+version = 1
+print(f"Hello {name}! Version {version + 1}")
+# Hello QS! Version 2
+
+# With expressions
+print(f"2 + 3 = {2 + 3}")
+# 2 + 3 = 5
+
+# With type annotations
+func greet(name) {
+    return f"Hi, I'm {name}"
+}
+print(greet("Ali"))  # Hi, I'm Ali
+```
+
+Syntax: `f"text {expr} more text"` or `f'text {expr} more text'`.
+
+---
+
+## List Comprehensions
+
+List comprehensions provide a concise way to create lists:
+
+```qscript
+# Basic: [expr for var in collection]
+squares = [x * x for x in range(5)]
+print(squares)  # [1, 4, 9, 16, 25]
+
+# With filter: [expr for var in collection if condition]
+evens = [x for x in range(10) if x % 2 == 0]
+print(evens)    # [2, 4, 6, 8, 10]
+
+# Strings
+chars = [c for c in "hello"]
+print(chars)    # [h, e, l, l, o]
+
+# Maps (iterates over keys)
+keys = [k for k in {"a": 1, "b": 2}]
+print(keys)     # [a, b]
+```
+
+Syntax: `[expression for variable in collection]` or `[expression for variable in collection if condition]`
+
+Translates to:
+```qscript
+result = []
+repeat var -> collection {
+    if condition {
+        result.append(expression)
+    }
+}
 ```
 
 ---
@@ -811,10 +782,10 @@ print(s[-1])                      # d
 
 | Function | Description | Example | Result |
 |----------|-------------|---------|--------|
-| `len(x)` | Length of string, list, or map | `len("hi")` | `2` |
+| `len(x)` | Length of string/list/map | `len("hi")` | `2` |
 | `type(x)` | Type name as string | `type(42)` | `"int"` |
 | `str(x)` | Convert to string | `str(42)` | `"42"` |
-| `isinstance(x, type)` | Check runtime type | `isinstance(42, "int")` | `true` |
+| `isinstance(x, type)` | Runtime type check | `isinstance(42, "int")` | `true` |
 
 ### Math Functions
 
@@ -828,43 +799,46 @@ print(s[-1])                      # d
 | `sin(x)` | Sine (radians) | `sin(0)` | `0` |
 | `cos(x)` | Cosine (radians) | `cos(0)` | `1` |
 | `tan(x)` | Tangent (radians) | `tan(0)` | `0` |
-| `log(x)` | Natural logarithm | `log(1)` | `0` |
+| `log(x)` | Natural log | `log(1)` | `0` |
 | `log2(x)` | Log base 2 | `log2(8)` | `3` |
 | `log10(x)` | Log base 10 | `log10(100)` | `2` |
 
-### List / Range Functions
+### Range & Random Functions
 
-| Function | Description |
-|----------|-------------|
-| `range(n)` | Generate list [1, 2, ..., n] (1-based) |
-| `range(start, end)` | Generate list [start, start+1, ..., end] (inclusive) |
-| `range(start, end, step)` | Generate list with custom step |
-| `random()` | Random float 0.0 to 1.0 |
+| Function | Description | Example | Result |
+|----------|-------------|---------|--------|
+| `range(n)` | List [1, 2, ..., n] (1-based, inclusive) | `range(3)` | `[1, 2, 3]` |
+| `range(start, end)` | List [start, ..., end] (inclusive) | `range(3, 7)` | `[3, 4, 5, 6, 7]` |
+| `range(start, end, step)` | With custom step | `range(1, 10, 3)` | `[1, 4, 7, 10]` |
+| `random()` | Random float 0.0 to 1.0 | `random()` | `0.372...` |
+
+### Special Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `ever_return(fn)` | Check if function can return | `ever_return(some_func)` |
+| `exit(code=0)` | Exit program | `exit(1)` |
 
 ### Assertion Functions
 
 | Function | Description |
 |----------|-------------|
-| `assert(cond)` | Assert condition is true (raises error if false) |
-| `assert_eq(a, b)` | Assert equality (raises error if not equal) |
-| `assert_ne(a, b)` | Assert inequality (raises error if equal) |
+| `assert(cond)` | Assert condition is true |
+| `assert_eq(a, b)` | Assert equality |
+| `assert_ne(a, b)` | Assert inequality |
 
 ### I/O Functions
 
 | Function | Description | Example |
 |----------|-------------|---------|
-| `print(...)` | Print values separated by spaces | `print("x =", x)` |
-| `input(prompt)` | Read user input | `name = input("Enter name: ")` |
-| `exit()` | Exit program immediately | `exit()` |
-| `exit(code)` | Exit with status code | `exit(1)` |
+| `print(...)` | Print space-separated values | `print("x =", x)` |
+| `input(prompt)` | Read user input | `name = input("Name: ")` |
 
 ---
 
 ## Exception Handling (try / oops)
 
 ### Catching Errors
-
-Use `try / oops` to catch errors:
 
 ```qscript
 try {
@@ -877,13 +851,9 @@ try {
 
 ### Throwing Errors
 
-Use `oops()` to throw an error:
-
 ```qscript
 func divide(a, b) {
-    if b == 0 {
-        oops("division by zero")
-    }
+    if b == 0 { oops("division by zero") }
     return a / b
 }
 
@@ -896,8 +866,6 @@ try {
 
 ### Error Variable Binding
 
-The variable after `oops` receives the error message:
-
 ```qscript
 try {
     x = undefined_var
@@ -907,19 +875,13 @@ try {
 # Caught: undefined variable 'undefined_var'
 ```
 
-### try/oops in Functions
+### In Functions
 
 ```qscript
 func safe_call(fn, arg) {
-    try {
-        return fn(arg)
-    } oops e {
-        return null
-    }
+    try { return fn(arg) }
+    oops e { return null }
 }
-
-result = safe_call(fn(x) -> 10 / x, 0)
-print(result)  # null
 ```
 
 ---
@@ -929,300 +891,250 @@ print(result)  # null
 ### from ... import
 
 ```qscript
-# From the standard library
+# Standard library
 from "stdlib/math.qs" import min, max, clamp
 
-# From a local file
+# Local file
 from "./helpers.qs" import greet
 
-# From an installed package
+# From installed package
 from "packages/owner_repo/main.qs" import something
 ```
 
 ### Import Scoping
 
-When you import individual functions, internally-called functions from the same module are **not** in scope:
+When you import a function, internally-called functions from the same module are NOT auto-imported. Import all dependencies:
 
 ```qscript
-# WORKS - leaf function (no internal dependencies):
-from "stdlib/time.qs" import now
-
-# BROKEN - year() internally calls localtime() which is not imported:
+# BROKEN: year() calls localtime() which isn't imported
 # from "stdlib/time.qs" import year
 
-# SOLUTION: import all needed functions together:
+# SOLUTION: import together
 from "stdlib/time.qs" import now, localtime, year
 ```
 
 ### Import Resolution
 
-The import system searches for modules in this order:
-
-1. **Relative to the current file's directory**
-2. **`QUANTO_HOME/stdlib/`** directory
-3. **`./stdlib/`** directory (relative to executable)
+1. Relative to the current file's directory
+2. `QUANTO_HOME/stdlib/` directory
+3. `./stdlib/` directory (relative to executable)
 
 ---
 
 ## Standard Library
 
-QuantoScript ships with a standard library accessible via `from "stdlib/<module>.qs" import <names>`.
-
 ### math.qs
-
-Basic mathematical operations on lists and numbers.
 
 | Function | Description | Example | Result |
 |----------|-------------|---------|--------|
 | `min(items)` | Minimum value in list | `min([3,7,1])` | `1` |
 | `max(items)` | Maximum value in list | `max([3,7,1])` | `7` |
-| `clamp(value, low, high)` | Clamp value to range | `clamp(5, 1, 3)` | `3` |
+| `clamp(value, low, high)` | Clamp to range | `clamp(5, 1, 3)` | `3` |
 
 ```qscript
 from "stdlib/math.qs" import min, max, clamp
-print(min([3, 7, 1]))  # 1
-print(max([3, 7, 1]))  # 7
-print(clamp(10, 1, 5)) # 5
 ```
 
 ### text.qs
 
-Additional string operations.
-
 | Function | Description | Example | Result |
 |----------|-------------|---------|--------|
-| `upper(text)` | Convert to uppercase | `upper("hello")` | `"HELLO"` |
-| `lower(text)` | Convert to lowercase | `lower("HELLO")` | `"hello"` |
-| `trim(text)` | Strip leading/trailing whitespace | `trim("  hi  ")` | `"hi"` |
-| `split(text, sep)` | Split by separator | `split("a,b,c", ",")` | `["a","b","c"]` |
-
-```qscript
-from "stdlib/text.qs" import upper, lower, trim, split
-print(upper("hello"))         # HELLO
-print(trim("  hi  "))         # hi
-```
+| `upper(text)` | Uppercase | `upper("hello")` | `"HELLO"` |
+| `lower(text)` | Lowercase | `lower("HELLO")` | `"hello"` |
+| `trim(text)` | Strip whitespace | `trim("  hi  ")` | `"hi"` |
+| `split(text, sep)` | Split | `split("a,b,c", ",")` | `["a","b","c"]` |
 
 ### json.qs
 
-JSON conversion.
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `parse(text)` | Parse JSON string to value | `parse('{"a":1}')` |
-| `stringify(value)` | Convert value to JSON string | `stringify({"a":1})` |
+| Function | Description |
+|----------|-------------|
+| `parse(text)` | Parse JSON string to value |
+| `stringify(value)` | Convert value to JSON string |
 
 ```qscript
 from "stdlib/json.qs" import parse, stringify
-data = {"name": "QS", "version": 1}
-json_str = stringify(data)
-print(json_str)              # {"name":"QS","version":1}
+json_str = stringify({"name": "QS"})
 parsed = parse(json_str)
-print(parsed["name"])        # QS
 ```
 
 ### log.qs
 
-Structured logging with timestamps.
-
 | Function | Description |
 |----------|-------------|
-| `debug(msg)` | Log with [DEBUG] level |
-| `info(msg)` | Log with [INFO] level |
-| `warn(msg)` | Log with [WARN] level |
-| `error(msg)` | Log with [ERROR] level |
+| `debug(msg)` | [DEBUG] level |
+| `info(msg)` | [INFO] level |
+| `warn(msg)` | [WARN] level |
+| `error(msg)` | [ERROR] level |
 
 ```qscript
-from "stdlib/log.qs" import info, warn, error
-info("Application started")
-warn("Low memory")
-error("Something went wrong")
-# [14:30:22] [INFO] Application started
-# [14:30:22] [WARN] Low memory
-# [14:30:22] [ERROR] Something went wrong
+from "stdlib/log.qs" import info, error
+info("Application started")      # [14:30:22] [INFO] Application started
+error("Something went wrong")     # [14:30:22] [ERROR] Something went wrong
 ```
 
 ### fs.qs
 
-File system operations.
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `exists(path)` | Check if file/directory exists | `exists("file.txt")` |
-| `read(path)` | Read text file | `content = read("file.txt")` |
-| `write(path, text)` | Write to file | `write("file.txt", "hello")` |
-| `mkdir(path)` | Create directory | `mkdir("mydir")` |
-| `remove(path)` | Delete file or directory | `remove("file.txt")` |
-| `rename(old, new)` | Rename file | `rename("a.txt", "b.txt")` |
-| `is_dir(path)` | Check if path is a directory | `is_dir("mydir")` |
-| `list_dir(path)` | List directory contents | `list_dir(".")` |
-| `basename(path)` | File name from path | `basename("a/b.txt")` → `"b.txt"` |
-| `dirname(path)` | Parent directory | `dirname("a/b.txt")` → `"a"` |
-| `extension(path)` | File extension | `extension("file.txt")` → `"txt"` |
-| `join_path(a, b)` | Join two path components | `join_path("a", "b")` → `"a/b"` |
+| Function | Description |
+|----------|-------------|
+| `exists(path)` | Check if file/dir exists |
+| `read(path)` | Read text file |
+| `write(path, text)` | Write to file |
+| `mkdir(path)` | Create directory |
+| `remove(path)` | Delete file or directory |
+| `rename(old, new)` | Rename |
+| `is_dir(path)` | Check if directory |
+| `list_dir(path)` | List directory contents |
+| `basename(path)` | File name from path |
+| `dirname(path)` | Parent directory |
+| `extension(path)` | File extension |
+| `join_path(a, b)` | Join two paths |
 
 ```qscript
-from "stdlib/fs.qs" import exists, read, write, remove, list_dir
+from "stdlib/fs.qs" import exists, read, write, remove
 write("temp.txt", "hello world")
-content = read("temp.txt")
-print(content)               # hello world
-print(exists("temp.txt"))    # true
-files = list_dir(".")
-print(files)
+print(read("temp.txt"))   # hello world
 remove("temp.txt")
 ```
 
 ### os.qs
 
-Operating system commands.
+> **⚠️ SECURITY WARNING:** `run()` and `capture()` execute shell commands directly. Do not pass untrusted input.
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `run(command)` | Run command and return exit code | `run("echo Hello")` |
-| `capture(command)` | Run command and capture stdout | `version = capture("git --version")` |
-| `cwd()` | Get current working directory | `dir = cwd()` |
-| `chdir(path)` | Change working directory | `chdir("/tmp")` |
-| `exists(command)` | Check if command exists in PATH | `exists("gcc")` |
-
-> **⚠️ SECURITY WARNING:** `run()` and `capture()` execute shell commands directly. Do not pass untrusted user input without validation.
+| Function | Description |
+|----------|-------------|
+| `run(command)` | Run command, return exit code |
+| `capture(command)` | Run command, capture stdout |
+| `cwd()` | Current working directory |
+| `chdir(path)` | Change directory |
+| `exists(command)` | Check if command in PATH |
 
 ```qscript
 from "stdlib/os.qs" import run, capture, cwd
-rc = run("echo Hello")               # Hello
-text = capture("git --version")       # git version 2.x.x
-dir = cwd()                           # /home/user/project
+rc = run("echo Hello")
+text = capture("git --version")
+dir = cwd()
 ```
 
-> **Note:** `os.exists()` checks if a command is available in PATH, not if a file exists. Use `fs.exists()` for file existence checking.
+> **Note:** `os.exists()` checks PATH for executables. Use `fs.exists()` for file existence.
 
 ### time.qs
 
-Time and date operations.
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `now()` | Current timestamp (seconds since epoch) | `now()` |
-| `localtime()` | Local time as a map | `localtime()["year"]` |
-| `format(ts, fmt)` | Format timestamp with strftime | `format(now(), "%Y-%m-%d")` |
-| `parse(text, fmt)` | Parse string to timestamp | `parse("2024-01-15", "%Y-%m-%d")` |
-| `year()` | Current year | `year()` |
-| `month()` | Current month (1-12) | `month()` |
-| `day()` | Current day (1-31) | `day()` |
-| `hour()` | Current hour (0-23) | `hour()` |
-| `minute()` | Current minute (0-59) | `minute()` |
-| `second()` | Current second (0-59) | `second()` |
-| `weekday()` | Day of week (0=Sunday, 6=Saturday) | `weekday()` |
-| `yearday()` | Day of year (0-365) | `yearday()` |
-| `now_str()` | Current time as `YYYY-MM-DD HH:MM:SS` | `now_str()` |
-| `today_str()` | Current date as `YYYY-MM-DD` | `today_str()` |
-| `diff_seconds(t1, t2)` | Difference between timestamps in seconds | `diff_seconds(t1, t2)` |
-| `add_seconds(ts, n)` | Add seconds | `add_seconds(now(), 3600)` |
-| `add_minutes(ts, n)` | Add minutes | `add_minutes(now(), 60)` |
-| `add_hours(ts, n)` | Add hours | `add_hours(now(), 24)` |
-| `add_days(ts, n)` | Add days | `add_days(now(), 7)` |
+| Function | Description |
+|----------|-------------|
+| `now()` | Timestamp (seconds since epoch) |
+| `localtime()` | Local time as map: year, month, day, hour, min, sec, wday, yday |
+| `format(ts, fmt)` | Format with strftime |
+| `parse(text, fmt)` | Parse string to timestamp |
+| `year()` / `month()` / `day()` / `hour()` / `minute()` / `second()` | Current time components |
+| `weekday()` | Day of week (0=Sunday) |
+| `yearday()` | Day of year (0-365) |
+| `now_str()` | Current time as `YYYY-MM-DD HH:MM:SS` |
+| `today_str()` | Current date as `YYYY-MM-DD` |
+| `diff_seconds(t1, t2)` | Difference in seconds |
+| `add_seconds(ts, n)` | Add seconds |
+| `add_minutes(ts, n)` | Add minutes |
+| `add_hours(ts, n)` | Add hours |
+| `add_days(ts, n)` | Add days |
 
 ```qscript
 from "stdlib/time.qs" import now, format, add_days, diff_seconds
 t = now()
-print(t)                          # 1734567890
-print(format(t, "%Y-%m-%d"))      # 2024-12-19
+print(format(t, "%Y-%m-%d"))       # 2024-12-19
 tomorrow = add_days(t, 1)
-print(diff_seconds(tomorrow, t))  # 86400
+print(diff_seconds(tomorrow, t))   # 86400
 ```
 
-> **Note:** `year()`, `month()`, `day()`, `hour()`, `minute()`, `second()`, `weekday()`, `yearday()`, `today_str()`, and `now_str()` internally call `localtime()`. Import `localtime` alongside them.
+> **Note:** `year()`, `month()`, etc. internally call `localtime()`. Import all needed functions together.
 
 ### random.qs
 
-PCG32-based random number generation — deterministic, portable, reproducible.
+PCG32-based — deterministic, reproducible.
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `seed(value)` | Set the random seed | `seed(42)` |
-| `randint(min, max)` | Random integer in [min, max] | `randint(1, 10)` |
-| `randrange(start, stop)` | Random integer in [start, stop) | `randrange(0, 10)` |
-| `choice(items)` | Random element from list | `choice([10,20,30])` |
-| `shuffle(items)` | Fisher-Yates shuffle (returns new list) | `shuffle([1,2,3])` |
-| `sample(items, k)` | Pick k unique random elements | `sample([1..10], 3)` |
+| Function | Description |
+|----------|-------------|
+| `seed(value)` | Set seed for reproducibility |
+| `randint(min, max)` | Random integer in [min, max] |
+| `randrange(start, stop)` | Random integer in [start, stop) |
+| `choice(items)` | Random element from list |
+| `shuffle(items)` | Fisher-Yates shuffle (new list) |
+| `sample(items, k)` | Pick k unique random elements |
 
 ```qscript
-from "stdlib/random.qs" import seed, randint, choice, shuffle
+from "stdlib/random.qs" import seed, randint, choice
 seed(42)
 x = randint(1, 100)
-print(x)                         # 77 (deterministic with seed 42)
 items = ["red", "green", "blue"]
 c = choice(items)
-shuffled = shuffle([1, 2, 3, 4, 5])
 ```
 
 ### core.qs
 
-Environment variable access.
-
 | Function | Description |
 |----------|-------------|
-| `env(name)` | Get environment variable value |
-
-```qscript
-from "stdlib/core.qs" import env
-path = env("PATH")
-home = env("HOME")
-print(home)  # /home/username
-```
+| `env(name)` | Get environment variable |
 
 ### net.qs
 
-Low-level TCP networking.
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `send(host, port, message)` | Send message and receive response | `send("example.com", 80, "GET /")` |
-| `send_json(host, port, data)` | Send map as JSON and receive response | `send_json("api.example.com", 8080, {"key": "val"})` |
-| `test(host, port)` | Test if host:port is reachable | `test("localhost", 80)` |
+| Function | Description |
+|----------|-------------|
+| `send(host, port, message)` | Send TCP message, get response |
+| `send_json(host, port, data)` | Send map as JSON |
+| `test(host, port)` | Test reachability |
 
 ```qscript
-from "stdlib/net.qs" import send, send_json, test
-
-# Raw TCP
+from "stdlib/net.qs" import send
 response = send("example.com", 80, "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
-
-# JSON
-data = {"action": "ping"}
-response = send_json("localhost", 3000, data)
 ```
 
 ### websocket.qs
 
-Stateful WebSocket client.
-
 | Function | Description |
 |----------|-------------|
-| `connect(url)` | Connect to a WebSocket server |
-| `try_connect(url)` | Connect without throwing on failure |
-| `send(ws, message)` | Send a text message |
-| `recv(ws)` | Receive a message (blocks) |
-| `send_json(ws, data)` | Send a map as JSON |
+| `connect(url)` | Connect to WebSocket |
+| `try_connect(url)` | Connect without throwing |
+| `send(ws, message)` | Send text message |
+| `recv(ws)` | Receive message (blocks) |
+| `send_json(ws, data)` | Send as JSON |
 | `recv_json(ws)` | Receive and parse JSON |
-| `is_open(ws)` | Check if connection is open |
-| `state(ws)` | Connection state: `"open"`, `"closed"`, or `"error"` |
-| `set_timeout(ws, ms)` | Set receive timeout in milliseconds |
-| `close(ws)` | Close the connection gracefully |
+| `is_open(ws)` | Check connection state |
+| `state(ws)` | Get state: "open", "closed", "error" |
+| `set_timeout(ws, ms)` | Set receive timeout |
+| `close(ws)` | Close connection |
 
 ```qscript
-from "stdlib/websocket.qs" import connect, send, recv, close, send_json, recv_json
-
+from "stdlib/websocket.qs" import connect, send, recv, close
 ws = connect("ws://echo.websocket.org")
 send(ws, "hello")
 msg = recv(ws)
-print(msg)  # hello
-
-send_json(ws, {"type": "greeting", "text": "hello"})
-response = recv_json(ws)
 close(ws)
 ```
 
-### async.qs (Experimental)
+### async.qs
 
-Async task management. **This module is experimental** — it may crash with two or more tasks under load.
+See [Async / Task System](#async--task-system) section below.
+
+---
+
+## Async / Task System
+
+QuantoScript has a built-in cooperative task system for concurrency.
+
+### Basic Usage
+
+```qscript
+from "stdlib/async.qs" import spawn, run, result, run_all
+
+# Create a task
+task = spawn(fn() -> { return 42 })
+run(task)
+print(result(task))  # 42
+
+# Spawn and run in one step
+from "stdlib/async.qs" import spawn_and_run
+print(spawn_and_run(fn() -> 1 + 2))  # 3
+```
+
+### API Reference
 
 | Function | Description |
 |----------|-------------|
@@ -1233,7 +1145,9 @@ Async task management. **This module is experimental** — it may crash with two
 | `run_all()` | Run all ready tasks cooperatively |
 | `spawn_and_run(fn)` | Convenience: spawn, run, and get result |
 
-Single-task `spawn`/`run`/`result` works; multi-task usage is unreliable.
+### Limitations
+
+> **⚠️ The async module is experimental.** Single-task `spawn`/`run`/`result` works reliably. Multi-task usage may hang or crash — see [docs/ASYNC_VALIDATION.md](docs/ASYNC_VALIDATION.md).
 
 ---
 
@@ -1244,55 +1158,43 @@ QuantoScript has **three execution engines**:
 | Engine | Command | Best For |
 |--------|---------|----------|
 | **Tree-walk interpreter** | `qs file.qs` | Development, debugging, quick scripts |
-| **Bytecode VM** | `qs vm file.qs` | Production: 2-3x faster than interpreter |
-| **Native C compiler** | `qs native file.qs` | Arithmetic-heavy code: ~10x speedup |
-
-All three engines take the same source code and produce **identical output**.
+| **Bytecode VM** | `qs vm file.qs` | Production: 2-3x faster |
+| **Native C compiler** | `qs native file.qs` | Arithmetic code: ~10x speedup |
 
 ```bash
-qs hello.qs            # interpreter
-qs vm hello.qs         # bytecode VM
-qs native hello.qs     # native C (requires gcc)
+qs hello.qs         # interpreter
+qs vm hello.qs      # VM (faster)
+qs native hello.qs  # native C (requires gcc)
 ```
 
 ### VM vs Interpreter
 
 | Feature | Interpreter | VM |
 |---------|-------------|-----|
-| Arithmetic | ✅ | ✅ |
-| Strings | ✅ | ✅ |
-| Lists | ✅ | ✅ |
-| Maps | ✅ | ✅ |
-| Functions | ✅ | ✅ |
-| Classes | ✅ | ✅ |
-| Imports | ✅ | ✅ |
-| Exceptions | ✅ | ✅ |
+| All language features | ✅ | ✅ |
 | Performance | Baseline | 2-3x faster |
-
-> **Recommendation:** Use `qs file.qs` (interpreter) during development. Use `qs vm file.qs` for production runs.
+| Recommendation | Development | Production |
 
 ---
 
 ## Bytecode VM & QVM Format
 
-### Compiling to Bytecode
+### Compile to Bytecode
 
 ```bash
 qs build program.qs                 # -> program.qvm
-qs build program.qs -o custom.qvm   # custom output path
+qs build program.qs -o custom.qvm   # custom output
 ```
 
-### Running Bytecode
+### Run Bytecode
 
 ```bash
 qs vm program.qvm                   # run compiled bytecode
-qs vm --dump-bytecode program.qs    # disassemble for debugging
-qs vm --trace program.qs            # print per-instruction trace
+qs vm --dump-bytecode program.qs    # disassemble
+qs vm --trace program.qs            # per-instruction trace
 ```
 
 ### QVM Format (Version 4)
-
-The `.qvm` format is a stable binary format with:
 
 ```
 ┌──────────────────────────────────────┐
@@ -1310,20 +1212,15 @@ The `.qvm` format is a stable binary format with:
 └──────────────────────────────────────┘
 ```
 
-| Feature | Status |
-|---------|--------|
-| Magic header | ✅ `0x314D5651` (ASCII "QVM1") |
-| Version validation | ✅ Version 4 |
-| CRC32 source checksums | ✅ |
-| Malformed file handling | ✅ Comprehensive |
-
-Each instruction is 13 bytes: opcode (1), integer arg (4), const index (4), source line (4).
+- Magic: `0x314D5651` ("QVM1")
+- Version 4, with CRC32 checksums
+- Each instruction is 13 bytes (opcode + arg_i + const_idx + line)
 
 ---
 
 ## Native C Compiler
 
-For arithmetic-heavy code, QuantoScript can emit C code and compile it to a native binary:
+For arithmetic-heavy code:
 
 ```bash
 qs native program.qs        # emit a_native.c
@@ -1331,23 +1228,8 @@ gcc -O2 a_native.c -o program_native
 ./program_native
 ```
 
-### Supported
-
-- Integer arithmetic (`+`, `-`, `*`, `/`, `%`)
-- `if` / `else`
-- `while` loops
-- `repeat` loops
-- Variable assignment
-- `print`
-
-### Not Supported
-
-- Functions and calls
-- Strings, lists, maps
-- Closures, lambdas
-- Classes, objects
-- Exceptions (`try`/`oops`)
-- Imports
+**Supported:** integer arithmetic, `if`/`else`, `while`, `repeat`, assignment, `print`
+**Not supported:** functions, strings, lists, maps, closures, classes, exceptions
 
 ---
 
@@ -1356,10 +1238,10 @@ gcc -O2 a_native.c -o program_native
 ### Running Code
 
 ```bash
-qs <file>               # run with tree-walk interpreter
-qs run <file>           # run with interpreter (same as qs)
-qs vm <file>            # run with bytecode VM
-qs build <file>         # compile to bytecode (.qvm)
+qs <file>               # tree-walk interpreter
+qs run <file>           # interpreter (same as qs)
+qs vm <file>            # bytecode VM
+qs build <file>         # compile to .qvm
 qs native <file>        # emit native C (a_native.c)
 qs compile <file>       # compile to native binary
 ```
@@ -1367,11 +1249,11 @@ qs compile <file>       # compile to native binary
 ### Development Tools
 
 ```bash
-qs                      # interactive REPL
-qs check <file>         # syntax check (no execution)
+qs                      # REPL
+qs check <file>         # syntax check
 qs fmt <file>           # format source code
 qs lint <file>          # report common mistakes
-qs doc <file>           # generate documentation from comments
+qs doc <file>           # generate docs from comments
 qs profile <file>       # profile function calls
 qs test [dir]           # run *_test.qs files
 ```
@@ -1379,17 +1261,17 @@ qs test [dir]           # run *_test.qs files
 ### Package Management
 
 ```bash
-qs install <github-url> # install a package from GitHub
-qs list                 # list installed packages
-qs remove <package>     # remove a package
-qs init                 # scaffold a new project
+qs install <github-url> # install package
+qs list                 # list installed
+qs remove <package>     # remove package
+qs init                 # scaffold a project
 ```
 
 ### Utility
 
 ```bash
-qs home                 # print the QUANTO_HOME directory
-qs version              # print the version
+qs home                 # print QUANTO_HOME
+qs version              # print version
 qs --help               # show help
 ```
 
@@ -1397,22 +1279,13 @@ qs --help               # show help
 
 | Flag | Description |
 |------|-------------|
-| `--dump-bytecode` | Print compiled bytecode to stderr |
-| `--trace` | Print per-instruction VM trace |
-| `--sandbox [path]` | Restrict file access to the given path |
-
-### Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | Runtime error or syntax error |
+| `--dump-bytecode` | Print bytecode to stderr |
+| `--trace` | Per-instruction VM trace |
+| `--sandbox [path]` | Restrict file access to path |
 
 ---
 
 ## REPL (Interactive Mode)
-
-Run `qs` without arguments to enter the interactive REPL:
 
 ```bash
 $ qs
@@ -1430,21 +1303,15 @@ $ qs
 
 ### REPL Features
 
-| Feature | Supported |
-|---------|-----------|
-| Multi-line blocks | ✅ Auto-continues on `{` |
-| Function definitions | ✅ `func` |
-| Class definitions | ✅ `class` |
-| Control flow | ✅ `if`/`maybe`/`else`, `while`, `repeat`, `try`/`oops` |
-| Imports | ✅ `from ... import` |
-| Expression evaluation | ✅ |
-| Exit | ✅ `exit` or `quit` |
+- Multi-line blocks (auto-continues on `{`)
+- Functions, classes, control flow
+- Import support
+- Expression evaluation
+- Exit via `exit` or `quit`
 
 ---
 
 ## Package Manager
-
-QuantoScript has a built-in, git-backed package manager.
 
 ### Creating a Project
 
@@ -1452,89 +1319,58 @@ QuantoScript has a built-in, git-backed package manager.
 qs init
 ```
 
-This scaffolds a project structure:
-
-```
-my-project/
-├── main.qs
-├── test/
-│   └── main_test.qs
-└── quanto.json
-```
+Creates: `main.qs`, `test/` directory, `quanto.json` manifest.
 
 ### Installing Packages
 
 ```bash
-# Install from GitHub
 qs install https://github.com/owner/repo
-
-# List installed packages
 qs list
-
-# Remove a package
 qs remove repo
 ```
 
-### Using Installed Packages
+### Using Packages
 
 ```qscript
 from "packages/owner_repo/main.qs" import something
 ```
 
-### quanto.json (Manifest)
-
-The `quanto.json` file contains project metadata and dependencies. Dependencies are resolved recursively during installation.
-
 ---
 
 ## Known Limitations
 
-### Language Limitations (v1.0.0)
+### v1.0.0 Limitations
 
 | Limitation | Description | Workaround |
 |------------|-------------|------------|
-| **Closures** | Inner functions cannot capture outer variables | Pass variables as parameters instead |
-| **Async/await** | `async.qs` crashes with 2+ tasks | Use single-task spawn/run/result only |
-| `\|\|` and `&&` | Not implemented as operators | Use `or` and `and` |
-| **Method chaining** | `split(",").count` fails on function return values | Use an intermediate variable |
-| **Single-line try/oops** | Tree-walk parser does not support single-line | Use multi-line syntax |
-| **Break/continue** | May fail inside single-line blocks | Use multi-line block bodies |
-| `not` in function args | `fn(not x)` does not work | Compute the value first |
-| **Return type enforcement** | Return annotations parsed but not enforced | Documentation only |
-| **Class field type annotations** | Parsed but not enforced | Documentation only |
-
-### Missing Features (Not in v1.0.0)
-
-- Inheritance (`extends`, `super`)
-- Interfaces / abstract methods
-- Generics / type parameters
-- Pattern matching (`match`/`switch`)
-- Ternary operator (`? :`)
-- `$"..."` string interpolation
-- List comprehensions
-- Decorators
-- Multiple return values
-- Enums
-- Default parameter values
-- Rest parameters (`*args`)
-- Named arguments (`**kwargs`)
+| `||` and `&&` | Not implemented as operators | Use `or` and `and` |
+| Method chaining on returns | `split(",").count` fails | Use intermediate variable |
+| Single-line try/oops | Not supported in interpreter | Use multi-line syntax |
+| Async/await multi-task | Can hang/crash | Single task only |
+| Inheritance | No `extends`, `super` | Composition |
+| Static methods | Not supported | Create module-level functions |
+| Interfaces | Not supported | — |
+| Generics | No type parameters | — |
+| Pattern matching | No `match`/`switch` | Use `if`/`maybe` |
+| Ternary operator | No `? :` | Use `if`/`else` |
+| Decorators | Not supported | — |
+| Multiple return values | Not supported | Return a list/map |
+| Enums | Not supported | — |
+| Return type enforcement | Parsed but not checked | — |
+| Class field type enforcement | Parsed but not checked | — |
 
 ---
 
 ## Common Errors & Debugging
 
-### Syntax Error
-
-If your code has a syntax error, you'll see a message with the file, line, and column:
+### Syntax Errors
 
 ```
 SyntaxError: unterminated string
 line 5, column 12
 ```
 
-### Type Error
-
-Runtime errors from type annotation enforcement:
+### Type Errors
 
 ```qscript
 func greet(name:string)
@@ -1542,49 +1378,39 @@ greet(42)
 # Error: argument 'name' has the wrong type
 ```
 
-### Import Error
-
-```
-from "nonexistent.qs" import x
-# Error: could not load module 'nonexistent.qs'
-```
-
 ### Debugging Tips
 
-1. **Use `print()` for basic debugging:**
+1. **print() debugging:**
    ```qscript
-   x = 42
-   print("x =", x)   # x = 42
+   print("x =", x)
    ```
 
-2. **Check types with `type()`:**
+2. **Check types:**
    ```qscript
-   print(type(x))     # int, string, list, ...
+   print(type(x))
    ```
 
-3. **Use `assert_eq()` for testing:**
+3. **Use assertions:**
    ```qscript
    assert_eq(add(2, 3), 5)
    ```
 
-4. **Validate syntax without running:**
+4. **Syntax check:**
    ```bash
    qs check myfile.qs
    ```
 
-5. **Enable VM tracing:**
+5. **VM trace:**
    ```bash
    qs vm --trace myfile.qs
    ```
 
-6. **Dump bytecode for inspection:**
+6. **Dump bytecode:**
    ```bash
    qs vm --dump-bytecode myfile.qs
    ```
 
-### Stack Trace
-
-Runtime errors include a full call stack:
+### Stack Traces
 
 ```
 SyntaxError: division by zero
@@ -1606,41 +1432,33 @@ src/
 ├── parts/
 │   ├── platform.inc      # Platform detection
 │   ├── types.inc          # Type definitions
-│   ├── values.inc         # Value system (object model)
+│   ├── values.inc         # Value system (17K lines total)
 │   ├── parser.inc         # Tree-walk parser (2,366 lines)
 │   ├── executor.inc       # Tree-walk interpreter
-│   ├── ast.inc            # AST node definitions
-│   ├── ast_parser.inc     # AST parser (for bytecode compiler)
-│   ├── ast_compiler.inc   # AST -> bytecode compiler
-│   ├── bytecode.inc       # Bytecode instruction definitions
-│   ├── vm.inc             # Bytecode VM
+│   ├── ast.inc / ast_parser.inc / ast_compiler.inc  # AST + bytecode
+│   ├── bytecode.inc / vm.inc     # Bytecode VM (41 opcodes)
 │   ├── qvm.inc            # QVM binary format I/O
-│   ├── native.inc         # Native (system) functions (2,133 lines)
+│   ├── native.inc         # System functions (2,133 lines)
 │   ├── native_compiler.inc# C code generator
-│   ├── cli.inc            # CLI handler (1,055 lines)
-│   └── ...
+│   ├── calls.inc          # Function call dispatch
+│   ├── blocks_imports.inc # Import resolution
+│   └── cli.inc            # CLI handler (1,055 lines)
 ```
 
 ### Performance
 
-- VM runs **2-3x faster** than the tree-walk interpreter
-- String interning eliminates 70-90% of variable name comparisons
+- VM: 2-3x faster than interpreter
+- String interning: eliminates 70-90% of variable name comparisons
 - 41 opcodes in the bytecode instruction set
-- Inline storage for up to 8 local variables (eliminates heap allocation)
-
-### Object Model
-
-- Objects use **shared identity** (reference semantics) — no deep copy
-- `clone_value()` copies the pointer, not the object
-- `c = a` means `c` and `a` point to the same object
-- All ObjectData tracked in an `object_registry` for cleanup at exit
 
 ### Testing
 
 - 132+ regression tests
 - Cross-platform CI (macOS, Linux, Windows)
-- Separate regression runner with PowerShell
 - Release audit score: 96/100
 
 ---
-
+ 
+> **Author:** PySudo  
+> **License:** MIT  
+> **More Info:** [GitHub Repository](https://github.com/PySudo/QuantoScript)
