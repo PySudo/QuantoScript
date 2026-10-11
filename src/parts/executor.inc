@@ -69,6 +69,39 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
             free(name);
             return 1;
         }
+        char *br = strchr(name, '[');
+        if (br && assign_op == '=') {
+            size_t obj_len = br - name;
+            char *obj_name = qs_strndup(name, obj_len);
+            char *end = strchr(br, ']');
+            if (!end) { free(obj_name); free(name); return 0; }
+            *end = '\0';
+            char *key_expr = br + 1;
+            Value key_val;
+            if (!eval_expression_text(env, key_expr, strlen(key_expr), line, &key_val, err)) {
+                free(obj_name); free(name); return 0;
+            }
+            int obj_idx = find_variable(env, obj_name);
+            if (obj_idx < 0) {
+                char msg[256]; snprintf(msg, sizeof(msg), "unknown variable '%s'", obj_name);
+                set_error(err, line, 1, msg); free_value(key_val); free(obj_name); free(name); return 0;
+            }
+            Value value;
+            if (!eval_expression_text(env, line_text + assignment_pos + 1, strlen(line_text + assignment_pos + 1), line, &value, err)) {
+                free_value(key_val); free(obj_name); free(name); return 0;
+            }
+            if (env->items[obj_idx].value.type == VALUE_DICT) {
+                Value new_val = clone_value(env->items[obj_idx].value);
+                char *k = value_to_string(key_val);
+                dict_set(&new_val.as.dict, k, clone_value(value));
+                free(k); free_value(env->items[obj_idx].value); env->items[obj_idx].value = new_val;
+                free_value(key_val); free_value(value); free(obj_name); free(name); return 1;
+            } else {
+                free_value(key_val); free_value(value); free(obj_name); free(name);
+                char msg[256]; snprintf(msg, sizeof(msg), "'%s' is not a map", obj_name);
+                set_error(err, line, 1, msg); return 0;
+            }
+        }
         free(name);
         return 0;
     }
@@ -289,7 +322,7 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
 
     int single_line_body = 0;
     if (!rest_is_space_or_comment(line_text, brace_pos + 1)) {
-        // Content after { on the same line â€” single-line loop body
+        // Content after { on the same line GÇö single-line loop body
         single_line_body = 1;
     }
 
@@ -772,7 +805,7 @@ static int execute_try(Program *program, Environment *env, size_t *index, size_t
 
     ParseError try_err = {0};
     if (!execute_range(program, env, *index + 1, try_close, &try_err)) {
-        // Error occurred â€” bind error variable if name was given
+        // Error occurred GÇö bind error variable if name was given
         if (error_var_name) {
             env_set(env, error_var_name, make_string_owned(qs_strdup(try_err.message)));
         }
@@ -1083,7 +1116,7 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
             size_t check = after_word;
             while (line_text[check] && isspace((unsigned char)line_text[check])) check++;
             if (line_text[check] == '(') {
-                // oops("message") â€” evaluate argument and throw
+                // oops("message") GÇö evaluate argument and throw
                 Value msg = make_null();
                 ParseError expr_err = {0};
                 const char *expr_start = line_text + after_word;
