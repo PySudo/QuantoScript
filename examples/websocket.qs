@@ -5,7 +5,7 @@ from "../stdlib/websocket.qs" import connect, send, recv, close, try_connect, se
 
 # Try to connect to an echo server
 print("Connecting to echo server...")
-ws = try_connect("ws://echo.websocket.org")
+ws = try_connect("wss://echo.websocket.org")
 
 if ws == null {
     print("Could not connect to echo server")
@@ -15,6 +15,10 @@ if ws == null {
 
     # Set a 3-second timeout for receives
     set_timeout(ws, 3000)
+
+    # echo.websocket.org sends a greeting right after connecting; read it
+    # so the replies below line up with the messages we send.
+    recv(ws)
 
     # Send a text message
     send(ws, "Hello from QuantoScript!")

@@ -36,11 +36,14 @@ func chat(server_url:string) {
     set_timeout(ws, 2000)
     print("Connected to", server_url)
 
+    # Some echo servers (echo.websocket.org) send a greeting on connect;
+    # consume it so the replies below line up with the messages we send.
+    safe_recv(ws)
+
     # Send a few messages
     messages = ["hello", "how are you?", "testing 1 2 3", "goodbye"]
 
-    for i = 0; i < len(messages); i = i + 1 {
-        msg = messages[i]
+    repeat msg -> messages {
         print("Sending:", msg)
 
         ok = safe_send(ws, msg)
@@ -66,4 +69,4 @@ func chat(server_url:string) {
 }
 
 # Run
-chat("ws://echo.websocket.org")
+chat("wss://echo.websocket.org")

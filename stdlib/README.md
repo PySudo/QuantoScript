@@ -51,9 +51,10 @@ response = post("https://httpbin.org/post", {"key": "val"})
 ```qs
 from "stdlib/websocket.qs" import connect, send, recv, close
 
-ws = connect("ws://echo.websocket.org")
+ws = connect("wss://echo.websocket.org")
+recv(ws)               # echo.websocket.org greets on connect
 send(ws, "Hello!")
-msg = recv(ws)
+msg = recv(ws)         # "Hello!"
 print(msg)
 close(ws)
 ```

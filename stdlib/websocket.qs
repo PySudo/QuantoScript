@@ -5,8 +5,9 @@
 #   from "stdlib/websocket.qs" import connect, send, recv, close
 #
 #   ws = connect("wss://echo.websocket.org")
+#   recv(ws)               # echo.websocket.org greets on connect
 #   send(ws, "hello")
-#   msg = recv(ws)
+#   msg = recv(ws)         # "hello"
 #   close(ws)
 
 # Internal: create a WebSocket connection object
