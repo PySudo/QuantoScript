@@ -190,7 +190,7 @@ print(ever_return(gives_number))   # true
 |----------|-------------|
 | `regex_match(pattern, text)` | does `text` match `pattern`? |
 | `regex_find(pattern, text)` | find the matching part |
-| `regex_replace(pattern, text, replacement)` | replace matches |
+| `regex_replace(pattern, replacement, text)` | replace every match of `pattern` in `text` |
 
 ```qscript
 print(regex_match("[0-9]+", "abc123"))   # true

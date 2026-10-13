@@ -527,13 +527,15 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             char *counter_name = qs_strdup("_rpt_i");
             char *len_name = qs_strdup("_rpt_n");
             char *coll_name = qs_strdup("_rpt_c");
+            char *pair_name = qs_strdup("_rpt_p");
 
             if (node->as.repeat.is_counted) {
                 astc_compile_expr(node->as.repeat.count_or_coll, prog);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(len_name)), 0, node->line);
             } else {
                 astc_compile_expr(node->as.repeat.count_or_coll, prog);
-                emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup("_iter_items")), 1, node->line);
+                const char *iter_fn = node->as.repeat.index_name ? "_iter_items2" : "_iter_items";
+                emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup(iter_fn)), 1, node->line);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
                 emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
                 emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup("len")), 1, node->line);
@@ -554,14 +556,28 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             emit(prog, OP_JUMP_IF_FALSE, make_null(), 0, node->line);
 
             if (!node->as.repeat.is_counted && node->as.repeat.var_name) {
-                emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
-                emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
-                emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
-                emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.repeat.var_name)), 0, node->line);
-
                 if (node->as.repeat.index_name) {
+                    emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
                     emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
+                    emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
+                    emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(pair_name)), 0, node->line);
+
+                    emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(pair_name)), 0, node->line);
+                    int pair_first = add_constant(prog, make_integer(1));
+                    emit(prog, OP_LOAD_CONST, make_null(), pair_first, node->line);
+                    emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
                     emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.repeat.index_name)), 0, node->line);
+
+                    emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(pair_name)), 0, node->line);
+                    int pair_second = add_constant(prog, make_integer(2));
+                    emit(prog, OP_LOAD_CONST, make_null(), pair_second, node->line);
+                    emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
+                    emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.repeat.var_name)), 0, node->line);
+                } else {
+                    emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
+                    emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
+                    emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
+                    emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.repeat.var_name)), 0, node->line);
                 }
             }
 

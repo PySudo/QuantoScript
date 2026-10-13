@@ -4,7 +4,7 @@
 # Usage:
 #   from "stdlib/websocket.qs" import connect, send, recv, close
 #
-#   ws = connect("ws://echo.websocket.org")
+#   ws = connect("wss://echo.websocket.org")
 #   send(ws, "hello")
 #   msg = recv(ws)
 #   close(ws)

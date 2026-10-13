@@ -63,8 +63,6 @@ These are tracked limitations of the v1.1.0 release:
 - **Class method bodies** must be written one statement per line. See
   [Classes](11-classes.md).
 - **Return type annotations** are parsed but not enforced at runtime.
-- **Single-line `try` / `oops`** is not accepted by the tree-walk parser; write
-  the blocks across multiple lines. See [Error Handling](12-error-handling.md).
 - **`break` and `continue`** should be used inside multi-line loop bodies.
 - **Method chaining on a function's return value** may fail. Assign the
   intermediate result to a variable first:

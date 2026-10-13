@@ -17,6 +17,18 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#if defined(_MSC_VER)
+#define QS_HAVE_POSIX_REGEX 0
+#elif defined(__has_include)
+#if __has_include(<regex.h>)
+#define QS_HAVE_POSIX_REGEX 1
+#else
+#define QS_HAVE_POSIX_REGEX 0
+#endif
+#else
+#define QS_HAVE_POSIX_REGEX 1
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +38,9 @@
 #include <windows.h>
 #include <winhttp.h>
 #include <direct.h>
+#if QS_HAVE_POSIX_REGEX
+#include <regex.h>
+#endif
 typedef SOCKET qs_socket_t;
 #define QS_INVALID_SOCKET INVALID_SOCKET
 #define qs_close_socket closesocket

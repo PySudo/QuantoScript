@@ -303,14 +303,6 @@ static ASTNode *ast_parse_primary(ASTParser *p) {
             return ast_null(p->line);
         }
 
-        {
-            const char *canon = qs_type_alias(name);
-            if (canon) {
-                free(name);
-                return ast_string(qs_strdup(canon), p->line);
-            }
-        }
-
         return ast_ident(name, p->line);
     }
 

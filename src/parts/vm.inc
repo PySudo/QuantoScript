@@ -47,6 +47,11 @@ static int vm_execute(VM *vm) {
             case OP_LOAD_VAR: {
                 int idx = find_variable(vm->env, instr->arg.as.string);
                 if (idx < 0) {
+                    const char *canon = qs_type_alias(instr->arg.as.string);
+                    if (canon) {
+                        vm_push(vm, make_string_owned(qs_strdup(canon)));
+                        break;
+                    }
                     char msg[256];
                     snprintf(msg, sizeof(msg), "unknown variable '%s'", instr->arg.as.string);
                     if (vm_raise(vm, msg)) { continue; }

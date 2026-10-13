@@ -51,9 +51,11 @@ else
 endif
 
 # ── Platform-specific settings ─────────────────────────────────────
+REGEX_LIB := $(shell echo '\#include <regex.h>' | $(CC) -E -x c - >/dev/null 2>&1 && echo -lregex)
+
 ifeq ($(UNAME_S),Windows)
   EXE  := .exe
-  LIBS += $(SSL_LIBS) -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt
+  LIBS += $(SSL_LIBS) -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt $(REGEX_LIB)
 else ifeq ($(UNAME_S),Darwin)
   LIBS += $(SSL_LIBS) -lpthread -lm
 else
@@ -63,11 +65,11 @@ endif
 # MinGW on Windows also reports MINGW*/MSYS* from uname
 ifneq (,$(findstring MINGW,$(UNAME_S)))
   EXE  := .exe
-  LIBS := $(SSL_LIBS) -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt
+  LIBS := $(SSL_LIBS) -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt $(REGEX_LIB)
 endif
 ifneq (,$(findstring MSYS,$(UNAME_S)))
   EXE  := .exe
-  LIBS := $(SSL_LIBS) -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt
+  LIBS := $(SSL_LIBS) -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt $(REGEX_LIB)
 endif
 
 OUT = build/qs$(EXE)

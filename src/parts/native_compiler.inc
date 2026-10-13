@@ -192,6 +192,13 @@ static int ir_lower_expr(ASTNode *node, IRProgram *prog) {
                 }
             }
             if (slot < 0) {
+                const char *canon = qs_type_alias(node->as.string);
+                if (canon) {
+                    int r = ir_alloc_reg(prog);
+                    int sidx = ir_add_string_const(prog, qs_strdup(canon));
+                    ir_emit(prog, IR_CONST_STRING, IR_STRING, r, sidx, 0);
+                    return r;
+                }
                 slot = prog->local_count++;
                 if (prog->local_count > prog->local_capacity) {
                     prog->local_capacity = prog->local_capacity ? prog->local_capacity * 2 : 16;

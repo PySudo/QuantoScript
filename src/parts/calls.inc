@@ -505,6 +505,115 @@ static int call_user_function(Parser *parser, Function *function, CallArgList *a
     return 1;
 }
 
+static int lambda_is_block_body(const char *body, char **inner_out) {
+    const char *s = body;
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+    if (*s != '{') return 0;
+
+    static const char *stmt_words[] = {
+        "return", "if", "while", "repeat", "try", "oops", "break",
+        "continue", "import", "from", "func", "class", "assert",
+        "async", "await", "spawn", NULL
+    };
+
+    int depth = 0;
+    char quote = 0;
+    int in_comment = 0;
+    size_t inner_start = 0;
+    size_t inner_end = 0;
+    int has_content = 0;
+    int saw_colon_top = 0;
+    int saw_assign = 0;
+    int saw_stmt_word = 0;
+    size_t i;
+
+    for (i = 0; s[i]; i++) {
+        char ch = s[i];
+        if (in_comment) {
+            if (ch == '\n') in_comment = 0;
+            continue;
+        }
+        if (ch == '#') { in_comment = 1; continue; }
+        if (quote) {
+            if (ch == '\\') { i++; continue; }
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        if (ch == '"' || ch == '\'') { quote = ch; continue; }
+        if (ch == '{') {
+            if (depth == 0) inner_start = i + 1;
+            depth++;
+            continue;
+        }
+        if (ch == '}') {
+            depth--;
+            if (depth == 0) {
+                inner_end = i;
+                i++;
+                break;
+            }
+            continue;
+        }
+        if (depth != 1) continue;
+        if (ch == ':' || ch == '=') {
+            has_content = 1;
+            if (ch == ':') {
+                saw_colon_top = 1;
+            } else {
+                char prev = s[i - 1];
+                char next = s[i + 1];
+                if (!(prev == '=' || prev == '!' || prev == '<' || prev == '>' ||
+                      next == '=' || next == '>')) {
+                    saw_assign = 1;
+                }
+            }
+        } else if (is_name_start((unsigned char)ch)) {
+            size_t w = i;
+            while (is_name_part((unsigned char)s[w])) w++;
+            size_t wlen = w - i;
+            size_t after_off = w;
+            if (s[after_off] == ':') {
+                saw_colon_top = 1;
+                has_content = 1;
+                i = w - 1;
+                continue;
+            }
+            for (size_t k = 0; stmt_words[k]; k++) {
+                if (strlen(stmt_words[k]) == wlen &&
+                    strncmp(s + i, stmt_words[k], wlen) == 0) {
+                    char before = i > 0 ? s[i - 1] : ' ';
+                    if (before >= 0 && before != '.' && !is_name_part((unsigned char)before)) {
+                        has_content = 1;
+                        saw_stmt_word = 1;
+                    }
+                    break;
+                }
+            }
+            i = w - 1;
+        }
+    }
+
+    if (depth == 0 && inner_end > inner_start) {
+        for (size_t t = i; s[t]; t++) {
+            if (s[t] != ' ' && s[t] != '\t' && s[t] != '\n' && s[t] != '\r') return 0;
+        }
+        if (!has_content) return 0;
+        int is_block = saw_stmt_word || saw_assign || !saw_colon_top;
+        if (!is_block) return 0;
+        if (inner_out) {
+            size_t len = inner_end - inner_start;
+            char *copy = malloc(len + 1);
+            if (copy) {
+                memcpy(copy, s + inner_start, len);
+                copy[len] = '\0';
+                *inner_out = copy;
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static int call_lambda(Parser *parser, Value *lambda, CallArgList *args, Value *out) {
     if (lambda->type != VALUE_LAMBDA) {
         parser_error(parser, "not a lambda");
@@ -547,6 +656,57 @@ static int call_lambda(Parser *parser, Value *lambda, CallArgList *args, Value *
     if (lambda->as.lambda.is_module) g_module_mode = 1;
 
     skip_spaces(&lambda_parser);
+
+    char *block_inner = NULL;
+    if (lambda_is_block_body(lambda->as.lambda.body, &block_inner)) {
+        int prev_has_return = g_has_return;
+        Value prev_return_value = g_return_value;
+        g_has_return = 0;
+        g_return_value = make_null();
+
+        g_function_depth++;
+        call_stack_push("<lambda>", parser->line);
+        Function *prev_fn = g_current_function;
+        g_current_function = NULL;
+
+        Program block = {0};
+        block.path = qs_strdup("<lambda>");
+        block.dir = qs_strdup(".");
+        split_text_to_program(block_inner, &block);
+        free(block_inner);
+        block_inner = NULL;
+
+        int ok = execute_range(&block, &local, 0, block.count, parser->err);
+
+        g_current_function = prev_fn;
+        call_stack_pop();
+        g_function_depth--;
+
+        free(block.items);
+        free(block.path);
+        free(block.dir);
+
+        g_module_mode = saved_module_mode;
+        free_environment(&local);
+
+        if (!ok) {
+            g_has_return = prev_has_return;
+            free_value(g_return_value);
+            g_return_value = prev_return_value;
+            return 0;
+        }
+
+        if (g_has_return) {
+            *out = clone_value(g_return_value);
+            free_value(g_return_value);
+        } else {
+            *out = make_null();
+        }
+        g_has_return = prev_has_return;
+        g_return_value = prev_return_value;
+        return 1;
+    }
+
     Value result;
     if (!parse_expression(&lambda_parser, &result)) {
         g_module_mode = saved_module_mode;

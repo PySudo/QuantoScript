@@ -11,7 +11,8 @@ static int arg_integer(Parser *parser, CallArgList *args, size_t index, const ch
 static int parse_http_url(const char *url, char **host, char **port, char **path, int *secure);
 static qs_socket_t tcp_connect_socket(const char *host, const char *port);
 static char *tcp_exchange(const char *host, const char *port, const char *message);
-static int sandbox_check_path(const char *path);
+static int sandbox_resolve(const char *path, char *out, size_t out_sz);
+static void sandbox_set_root(const char *root);
 static Value make_response_map(int ok, long status, char *body, char *raw);
 static char *trim_string_copy(const char *text);
 static Value split_string_value(const char *text, const char *separator);
@@ -403,10 +404,114 @@ static int builtin_http_patch(Parser *parser, CallArgList *args, Value *out) {
     return builtin_http_request(parser, "PATCH", args, out);
 }
 
-static int sandbox_check_path(const char *path) {
-    if (!g_sandbox_mode) return 1;
-    if (g_sandbox_path[0] == '\0') return 1;
-    return strncmp(path, g_sandbox_path, strlen(g_sandbox_path)) == 0;
+static int qs_path_is_abs(const char *p) {
+#ifdef _WIN32
+    if (p[0] == '/' || p[0] == '\\') return 1;
+    if (isalpha((unsigned char)p[0]) && p[1] == ':') return 1;
+    return 0;
+#else
+    return p[0] == '/';
+#endif
+}
+
+static void qs_lexical_normalize(const char *input, char *out, size_t out_sz) {
+    const char *p = input;
+    size_t olen = 0;
+#ifdef _WIN32
+    if (isalpha((unsigned char)p[0]) && p[1] == ':') {
+        if (out_sz < 4) { out[0] = '\0'; return; }
+        out[0] = (char)toupper((unsigned char)p[0]);
+        out[1] = ':';
+        olen = 2;
+        p += 2;
+    }
+#endif
+    const char *parts[512];
+    size_t part_lens[512];
+    int depth = 0;
+    while (*p) {
+        while (*p == '/' || *p == '\\') p++;
+        if (!*p) break;
+        const char *start = p;
+        while (*p && *p != '/' && *p != '\\') p++;
+        size_t len = (size_t)(p - start);
+        if (len == 1 && start[0] == '.') continue;
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            if (depth > 0) depth--;
+            continue;
+        }
+        if (depth < 512) { parts[depth] = start; part_lens[depth] = len; depth++; }
+    }
+    if (olen + 1 >= out_sz) { out[out_sz - 1] = '\0'; return; }
+    out[olen++] = '/';
+    for (int i = 0; i < depth; i++) {
+        if (olen + part_lens[i] + 1 >= out_sz) break;
+        memcpy(out + olen, parts[i], part_lens[i]);
+        olen += part_lens[i];
+        if (i + 1 < depth) out[olen++] = '/';
+    }
+    out[olen] = '\0';
+}
+
+static void sandbox_set_root(const char *root) {
+#ifdef _WIN32
+    char abs[2048];
+    if (_fullpath(abs, root, sizeof(abs)) == NULL) {
+        snprintf(abs, sizeof(abs), "%s", root);
+    }
+    char normalized[1024];
+    qs_lexical_normalize(abs, normalized, sizeof(normalized));
+    snprintf(g_sandbox_path, sizeof(g_sandbox_path), "%s", normalized);
+#else
+    char abs[4096];
+    if (realpath(root, abs) == NULL) {
+        char cwd[2048];
+        if (getcwd(cwd, sizeof(cwd)) == NULL) cwd[0] = '\0';
+        snprintf(abs, sizeof(abs), "%s/%s", cwd, root);
+    }
+    char normalized[1024];
+    qs_lexical_normalize(abs, normalized, sizeof(normalized));
+    snprintf(g_sandbox_path, sizeof(g_sandbox_path), "%s", normalized);
+#endif
+}
+
+static int sandbox_resolve(const char *path, char *out, size_t out_sz) {
+    if (!g_sandbox_mode || g_sandbox_path[0] == '\0') {
+        snprintf(out, out_sz, "%s", path);
+        return 1;
+    }
+    char combined[4096];
+    if (qs_path_is_abs(path)) {
+        snprintf(combined, sizeof(combined), "%s", path);
+    } else {
+        snprintf(combined, sizeof(combined), "%s/%s", g_sandbox_path, path);
+    }
+    char normalized[4096];
+    qs_lexical_normalize(combined, normalized, sizeof(normalized));
+
+    size_t root_len = strlen(g_sandbox_path);
+#ifdef _WIN32
+    int inside = _strnicmp(normalized, g_sandbox_path, root_len) == 0;
+#else
+    int inside = strncmp(normalized, g_sandbox_path, root_len) == 0;
+#endif
+    if (inside && normalized[root_len] != '\0' && normalized[root_len] != '/') {
+        inside = 0;
+    }
+    if (!inside) return 0;
+    snprintf(out, out_sz, "%s", normalized);
+    return 1;
+}
+
+static int path_argument_resolved(Parser *parser, CallArgList *args, size_t index,
+                                  const char *name, char *out, size_t out_sz) {
+    const char *path = NULL;
+    if (!arg_string(parser, args, index, name, &path)) return 0;
+    if (!sandbox_resolve(path, out, out_sz)) {
+        parser_error(parser, "access denied: sandbox mode");
+        return 0;
+    }
+    return 1;
 }
 
 static int args_need(Parser *parser, CallArgList *args, size_t count, const char *name) {
@@ -644,7 +749,7 @@ static int connect_with_timeout(qs_socket_t sock, const struct sockaddr *addr, s
 static qs_socket_t tcp_connect_socket(const char *host, const char *port) {
     if (!socket_startup()) return QS_INVALID_SOCKET;
     struct addrinfo hints = {0};
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     struct addrinfo *result = NULL;
     if (getaddrinfo(host, port, &hints, &result) != 0) return QS_INVALID_SOCKET;
@@ -719,6 +824,81 @@ static Value split_string_value(const char *text, const char *separator) {
     }
     list_push(&value.as.list, make_string_owned(qs_strdup(start)));
     return value;
+}
+
+static void buf_append(char **buf, size_t *used, size_t *cap, const char *src, size_t len) {
+    if (*used + len + 1 > *cap) {
+        size_t next_cap = (*used + len + 1) * 2;
+        char *next = realloc(*buf, next_cap);
+        if (!next) { fprintf(stderr, "out of memory\n"); exit(2); }
+        *buf = next;
+        *cap = next_cap;
+    }
+    memcpy(*buf + *used, src, len);
+    *used += len;
+    (*buf)[*used] = '\0';
+}
+
+#define QS_WS_MAX_CONNS 64
+typedef struct {
+    qs_socket_t sock;
+    SSL *ssl;
+    SSL_CTX *ctx;
+} WsTlsConn;
+static WsTlsConn g_ws_conns[QS_WS_MAX_CONNS];
+static int g_ws_conn_count = 0;
+
+static SSL *ws_tls_lookup(qs_socket_t sock) {
+    for (int i = 0; i < g_ws_conn_count; i++) {
+        if (g_ws_conns[i].sock == sock) return g_ws_conns[i].ssl;
+    }
+    return NULL;
+}
+
+static void ws_tls_register(qs_socket_t sock, SSL *ssl, SSL_CTX *ctx) {
+    if (g_ws_conn_count < QS_WS_MAX_CONNS) {
+        g_ws_conns[g_ws_conn_count].sock = sock;
+        g_ws_conns[g_ws_conn_count].ssl = ssl;
+        g_ws_conns[g_ws_conn_count].ctx = ctx;
+        g_ws_conn_count++;
+    }
+}
+
+static void ws_tls_unregister(qs_socket_t sock) {
+    for (int i = 0; i < g_ws_conn_count; i++) {
+        if (g_ws_conns[i].sock == sock) {
+            if (g_ws_conns[i].ssl) SSL_free(g_ws_conns[i].ssl);
+            if (g_ws_conns[i].ctx) SSL_CTX_free(g_ws_conns[i].ctx);
+            g_ws_conns[i] = g_ws_conns[--g_ws_conn_count];
+            return;
+        }
+    }
+}
+
+static int ws_raw_send(qs_socket_t sock, const char *buf, int len) {
+    SSL *ssl = ws_tls_lookup(sock);
+    if (ssl) return SSL_write(ssl, buf, len);
+    return send(sock, buf, len, 0);
+}
+
+static int ws_raw_recv(qs_socket_t sock, char *buf, int len, int flags) {
+    SSL *ssl = ws_tls_lookup(sock);
+    if (ssl) {
+        if (flags & MSG_PEEK) return SSL_peek(ssl, buf, len);
+        return SSL_read(ssl, buf, len);
+    }
+    return recv(sock, buf, len, flags);
+}
+
+static int ws_tls_init_once(void) {
+    static int started = 0;
+    if (!started) {
+        SSL_library_init();
+        SSL_load_error_strings();
+        OpenSSL_add_ssl_algorithms();
+        started = 1;
+    }
+    return 1;
 }
 
 static int call_builtin(Parser *parser, const char *name, CallArgList *args, Value *out) {
@@ -801,6 +981,46 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             return 1;
         }
         *out = clone_value(value);
+        return 1;
+    }
+    if (strcmp(name, "_iter_items2") == 0) {
+        if (!args_need(parser, args, 1, name)) {
+            return 0;
+        }
+        Value value = args->items[0].value;
+        Value pairs = make_list_empty();
+        if (value.type == VALUE_INTEGER) {
+            for (long k = 1; k <= value.as.integer; k++) {
+                Value pair = make_list_empty();
+                list_push(&pair.as.list, make_integer(k));
+                list_push(&pair.as.list, make_integer(k));
+                list_push(&pairs.as.list, pair);
+            }
+        } else if (value.type == VALUE_STRING) {
+            const char *s = value.as.string ? value.as.string : "";
+            for (size_t k = 0; s[k]; k++) {
+                char buf[2] = { s[k], '\0' };
+                Value pair = make_list_empty();
+                list_push(&pair.as.list, make_integer((long)k + 1));
+                list_push(&pair.as.list, make_string_owned(qs_strdup(buf)));
+                list_push(&pairs.as.list, pair);
+            }
+        } else if (value.type == VALUE_LIST) {
+            for (size_t k = 0; k < value.as.list.count; k++) {
+                Value pair = make_list_empty();
+                list_push(&pair.as.list, make_integer((long)k + 1));
+                list_push(&pair.as.list, clone_value(value.as.list.items[k]));
+                list_push(&pairs.as.list, pair);
+            }
+        } else if (value.type == VALUE_DICT) {
+            for (size_t k = 0; k < value.as.dict.count; k++) {
+                Value pair = make_list_empty();
+                list_push(&pair.as.list, make_string_owned(qs_strdup(value.as.dict.items[k].key)));
+                list_push(&pair.as.list, clone_value(value.as.dict.items[k].value));
+                list_push(&pairs.as.list, pair);
+            }
+        }
+        *out = pairs;
         return 1;
     }
     if (strcmp(name, "isinstance") == 0) {
@@ -1104,8 +1324,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         if (args->count != 2) { parser_error(parser, "regex_match needs pattern and string"); return 0; }
         const char *pattern = args->items[0].value.as.string;
         const char *text = args->items[1].value.as.string;
-#ifdef _WIN32
-
+#if !QS_HAVE_POSIX_REGEX
         *out = make_bool(strstr(text, pattern) != NULL);
 #else
         regex_t re;
@@ -1123,7 +1342,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         const char *pattern = args->items[0].value.as.string;
         const char *text = args->items[1].value.as.string;
         ValueList matches = {0};
-#ifdef _WIN32
+#if !QS_HAVE_POSIX_REGEX
 
         const char *search = text;
         size_t pat_len = strlen(pattern);
@@ -1156,24 +1375,40 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
         char *result = NULL;
         size_t text_len = strlen(text);
-        size_t pat_len = strlen(pattern);
         size_t rep_len = strlen(replacement);
-        size_t cap = text_len + 1;
+        size_t cap = text_len + rep_len + 16;
+        size_t used = 0;
         result = malloc(cap);
+        if (!result) { fprintf(stderr, "out of memory\n"); exit(2); }
         result[0] = '\0';
         const char *search = text;
+#if !QS_HAVE_POSIX_REGEX
+        size_t pat_len = strlen(pattern);
         while (1) {
             const char *found = strstr(search, pattern);
-            if (!found) { strcat(result, search); break; }
-            size_t prefix = (size_t)(found - search);
-            if (strlen(result) + prefix + rep_len + 1 > cap) {
-                cap = (strlen(result) + prefix + rep_len + 1) * 2;
-                result = realloc(result, cap);
-            }
-            strncat(result, search, prefix);
-            strcat(result, replacement);
+            if (!found) { buf_append(&result, &used, &cap, search, strlen(search)); break; }
+            buf_append(&result, &used, &cap, search, (size_t)(found - search));
+            buf_append(&result, &used, &cap, replacement, rep_len);
             search = found + pat_len;
         }
+#else
+        regex_t re;
+        int reg_ret = regcomp(&re, pattern, REG_EXTENDED);
+        if (reg_ret != 0) { parser_error(parser, "invalid regex pattern"); free(result); return 0; }
+        regmatch_t match;
+        while (*search && regexec(&re, search, 1, &match, 0) == 0) {
+            buf_append(&result, &used, &cap, search, (size_t)match.rm_so);
+            buf_append(&result, &used, &cap, replacement, rep_len);
+            if (match.rm_eo == 0) {
+                buf_append(&result, &used, &cap, search + match.rm_so, 1);
+                search += match.rm_so + 1;
+            } else {
+                search += match.rm_eo;
+            }
+        }
+        regfree(&re);
+        buf_append(&result, &used, &cap, search, strlen(search));
+#endif
         *out = make_string_owned(result);
         return 1;
     }
@@ -1224,7 +1459,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         char *host = NULL, *port = NULL, *path = NULL;
         int secure = 0;
         if (!parse_http_url(url, &host, &port, &path, &secure)) {
-            parser_error(parser, "ws_connect needs http:// or https:// URL");
+            parser_error(parser, "ws_connect needs a ws:// or wss:// URL");
             free(host); free(port); free(path);
             return 0;
         }
@@ -1255,6 +1490,34 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             return 1;
         }
 
+        if (secure) {
+            ws_tls_init_once();
+            SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+            SSL *ssl = ctx ? SSL_new(ctx) : NULL;
+            if (!ssl) {
+                if (ctx) SSL_CTX_free(ctx);
+                qs_close_socket(sock);
+                free(host); free(port); free(path);
+                *out = make_null();
+                return 1;
+            }
+            SSL_set_tlsext_host_name(ssl, host);
+#ifdef _WIN32
+            SSL_set_fd(ssl, (int)sock);
+#else
+            SSL_set_fd(ssl, sock);
+#endif
+            if (SSL_connect(ssl) != 1) {
+                SSL_free(ssl);
+                SSL_CTX_free(ctx);
+                qs_close_socket(sock);
+                free(host); free(port); free(path);
+                *out = make_null();
+                return 1;
+            }
+            ws_tls_register(sock, ssl, ctx);
+        }
+
         size_t req_len = strlen(host) + strlen(path) + strlen(key) + 256;
         char *request = malloc(req_len);
         snprintf(request, req_len,
@@ -1270,10 +1533,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         size_t sent = 0;
         size_t request_size = strlen(request);
         while (sent < request_size) {
-            int chunk = send(sock, request + sent, (int)(request_size - sent), 0);
+            int chunk = ws_raw_send(sock, request + sent, (int)(request_size - sent));
             if (chunk <= 0) {
                 free(request);
                 free(host); free(port); free(path);
+                ws_tls_unregister(sock);
                 qs_close_socket(sock);
                 *out = make_null();
                 return 1;
@@ -1283,9 +1547,10 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         free(request);
 
         char response_buf[4096];
-        int response_len = recv(sock, response_buf, sizeof(response_buf) - 1, 0);
+        int response_len = ws_raw_recv(sock, response_buf, sizeof(response_buf) - 1, 0);
         if (response_len <= 0) {
             free(host); free(port); free(path);
+            ws_tls_unregister(sock);
             qs_close_socket(sock);
             *out = make_null();
             return 1;
@@ -1294,6 +1559,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
         if (strstr(response_buf, "101") == NULL) {
             free(host); free(port); free(path);
+            ws_tls_unregister(sock);
             qs_close_socket(sock);
             *out = make_null();
             return 1;
@@ -1340,7 +1606,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
         size_t sent = 0;
         while (sent < frame_len) {
-            int chunk = send(sock, frame + sent, (int)(frame_len - sent), 0);
+            int chunk = ws_raw_send(sock, frame + sent, (int)(frame_len - sent));
             if (chunk <= 0) { free(frame); *out = make_bool(0); return 1; }
             sent += chunk;
         }
@@ -1354,7 +1620,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         qs_socket_t sock = (qs_socket_t)(intptr_t)args->items[0].value.as.floating;
 
         unsigned char header[2];
-        int got = recv(sock, (char *)header, 2, 0);
+        int got = ws_raw_recv(sock, (char *)header, 2, 0);
         if (got <= 0) { *out = make_null(); return 1; }
 
         int opcode = header[0] & 0x0F;
@@ -1363,11 +1629,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
         if (payload_len == 126) {
             unsigned char ext[2];
-            recv(sock, (char *)ext, 2, 0);
+            ws_raw_recv(sock, (char *)ext, 2, 0);
             payload_len = (ext[0] << 8) | ext[1];
         } else if (payload_len == 127) {
             unsigned char ext[8];
-            recv(sock, (char *)ext, 8, 0);
+            ws_raw_recv(sock, (char *)ext, 8, 0);
             payload_len = 0;
             for (int i = 0; i < 8; i++) {
                 payload_len = (payload_len << 8) | ext[i];
@@ -1376,13 +1642,13 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
         unsigned char mask_key[4] = {0};
         if (masked) {
-            recv(sock, (char *)mask_key, 4, 0);
+            ws_raw_recv(sock, (char *)mask_key, 4, 0);
         }
 
         char *payload = malloc(payload_len + 1);
         size_t received = 0;
         while (received < payload_len) {
-            int r = recv(sock, payload + received, (int)(payload_len - received), 0);
+            int r = ws_raw_recv(sock, payload + received, (int)(payload_len - received), 0);
             if (r <= 0) { free(payload); *out = make_null(); return 1; }
             received += r;
         }
@@ -1396,7 +1662,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
         if (opcode == 9) {
             char pong[2] = {(char)0x8A, 0x00};
-            send(sock, pong, 2, 0);
+            ws_raw_send(sock, pong, 2);
             free(payload);
             *out = make_null();
             return 1;
@@ -1418,7 +1684,8 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         unsigned char mask[4];
         for (int i = 0; i < 4; i++) mask[i] = (unsigned char)(rand() & 0xFF);
         char close_frame[6] = {(char)0x88, (char)0x80, (char)mask[0], (char)mask[1], (char)mask[2], (char)mask[3]};
-        send(sock, close_frame, 6, 0);
+        ws_raw_send(sock, close_frame, 6);
+        ws_tls_unregister(sock);
         qs_close_socket(sock);
         *out = make_null();
         return 1;
@@ -1431,7 +1698,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             *out = make_string_owned(qs_strdup("closed"));
         } else {
             char peek_buf[1];
-            int peek_result = recv(sock, peek_buf, 1, MSG_PEEK);
+            int peek_result = ws_raw_recv(sock, peek_buf, 1, MSG_PEEK);
             if (peek_result == 0) {
                 *out = make_string_owned(qs_strdup("closed"));
             } else if (peek_result < 0) {
@@ -2031,11 +2298,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
     if (strcmp(name, "sys_exists") == 0) {
-        const char *path = NULL;
-        if (!args_need(parser, args, 1, name) || !arg_string(parser, args, 0, name, &path)) {
+        if (!args_need(parser, args, 1, name)) {
             return 0;
         }
-        FILE *file = fopen(path, "rb");
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) {
+            return 0;
+        }
+        FILE *file = fopen(resolved, "rb");
         if (file) {
             fclose(file);
             *out = make_bool(1);
@@ -2045,15 +2315,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
     if (strcmp(name, "sys_read") == 0) {
-        const char *path = NULL;
-        if (!args_need(parser, args, 1, name) || !arg_string(parser, args, 0, name, &path)) {
+        if (!args_need(parser, args, 1, name)) {
             return 0;
         }
-        if (!sandbox_check_path(path)) {
-            parser_error(parser, "access denied: sandbox mode");
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) {
             return 0;
         }
-        FILE *file = fopen(path, "rb");
+        FILE *file = fopen(resolved, "rb");
         if (!file) {
             parser_error(parser, "sys_read cannot open file");
             return 0;
@@ -2073,18 +2342,16 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
     if (strcmp(name, "sys_write") == 0) {
-        const char *path = NULL;
         const char *text = NULL;
         if (!args_need(parser, args, 2, name) ||
-            !arg_string(parser, args, 0, name, &path) ||
             !arg_string(parser, args, 1, name, &text)) {
             return 0;
         }
-        if (!sandbox_check_path(path)) {
-            parser_error(parser, "access denied: sandbox mode");
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) {
             return 0;
         }
-        FILE *file = fopen(path, "wb");
+        FILE *file = fopen(resolved, "wb");
         if (!file) {
             *out = make_bool(0);
             return 1;
@@ -2096,49 +2363,53 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
     if (strcmp(name, "sys_mkdir") == 0) {
-        const char *path = NULL;
-        if (!args_need(parser, args, 1, name) || !arg_string(parser, args, 0, name, &path)) return 0;
+        if (!args_need(parser, args, 1, name)) return 0;
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
 #ifdef _WIN32
-        *out = make_bool(_mkdir(path) == 0);
+        *out = make_bool(_mkdir(resolved) == 0);
 #else
-        *out = make_bool(mkdir(path, 0755) == 0);
+        *out = make_bool(mkdir(resolved, 0755) == 0);
 #endif
         return 1;
     }
     if (strcmp(name, "sys_remove") == 0) {
-        const char *path = NULL;
-        if (!args_need(parser, args, 1, name) || !arg_string(parser, args, 0, name, &path)) return 0;
-        *out = make_bool(remove(path) == 0);
+        if (!args_need(parser, args, 1, name)) return 0;
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
+        *out = make_bool(remove(resolved) == 0);
         return 1;
     }
     if (strcmp(name, "sys_rename") == 0) {
-        const char *old_path = NULL;
-        const char *new_path = NULL;
-        if (!args_need(parser, args, 2, name) ||
-            !arg_string(parser, args, 0, name, &old_path) ||
-            !arg_string(parser, args, 1, name, &new_path)) return 0;
-        *out = make_bool(rename(old_path, new_path) == 0);
+        if (!args_need(parser, args, 2, name)) return 0;
+        char resolved_old[4096];
+        char resolved_new[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved_old, sizeof(resolved_old))) return 0;
+        if (!path_argument_resolved(parser, args, 1, name, resolved_new, sizeof(resolved_new))) return 0;
+        *out = make_bool(rename(resolved_old, resolved_new) == 0);
         return 1;
     }
     if (strcmp(name, "sys_is_dir") == 0) {
-        const char *path = NULL;
-        if (!args_need(parser, args, 1, name) || !arg_string(parser, args, 0, name, &path)) return 0;
+        if (!args_need(parser, args, 1, name)) return 0;
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
 #ifdef _WIN32
-        DWORD attrs = GetFileAttributesA(path);
+        DWORD attrs = GetFileAttributesA(resolved);
         *out = make_bool(attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY));
 #else
         struct stat st;
-        *out = make_bool(stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+        *out = make_bool(stat(resolved, &st) == 0 && S_ISDIR(st.st_mode));
 #endif
         return 1;
     }
     if (strcmp(name, "sys_list_dir") == 0) {
-        const char *path = NULL;
-        if (!args_need(parser, args, 1, name) || !arg_string(parser, args, 0, name, &path)) return 0;
+        if (!args_need(parser, args, 1, name)) return 0;
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
 #ifdef _WIN32
         WIN32_FIND_DATAA find_data;
-        char pattern[1024];
-        snprintf(pattern, sizeof(pattern), "%s\\*", path);
+        char pattern[8192];
+        snprintf(pattern, sizeof(pattern), "%s\\*", resolved);
         HANDLE hFind = FindFirstFileA(pattern, &find_data);
         ValueList list = {0};
         if (hFind != INVALID_HANDLE_VALUE) {
@@ -2150,7 +2421,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             FindClose(hFind);
         }
 #else
-        DIR *dir = opendir(path);
+        DIR *dir = opendir(resolved);
         ValueList list = {0};
         if (dir) {
             struct dirent *entry;
@@ -2276,6 +2547,10 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
     if (strcmp(name, "sys_cwd") == 0) {
+        if (g_sandbox_mode && g_sandbox_path[0] != '\0') {
+            *out = make_string_owned(qs_strdup(g_sandbox_path));
+            return 1;
+        }
         char buf[4096];
 #ifdef _WIN32
         if (_getcwd(buf, sizeof(buf))) {
@@ -2290,12 +2565,12 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
     }
     if (strcmp(name, "sys_chdir") == 0) {
         if (!args_need(parser, args, 1, "sys_chdir")) return 0;
-        const char *path = NULL;
-        if (!arg_string(parser, args, 0, name, &path)) return 0;
+        char resolved[4096];
+        if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
 #ifdef _WIN32
-        int ok = (_chdir(path) == 0);
+        int ok = (_chdir(resolved) == 0);
 #else
-        int ok = (chdir(path) == 0);
+        int ok = (chdir(resolved) == 0);
 #endif
         *out = make_bool(ok);
         return 1;
@@ -2319,7 +2594,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 static int is_builtin_function(const char *name) {
     return strcmp(name, "exit") == 0 || strcmp(name, "ever_return") == 0 ||
            strcmp(name, "abs") == 0 || strcmp(name, "len") == 0 ||
-           strcmp(name, "_iter_items") == 0 ||
+           strcmp(name, "_iter_items") == 0 || strcmp(name, "_iter_items2") == 0 ||
            strcmp(name, "type") == 0 || strcmp(name, "isinstance") == 0 ||
            strcmp(name, "str") == 0 || strcmp(name, "range") == 0 ||
            strcmp(name, "morph") == 0 ||

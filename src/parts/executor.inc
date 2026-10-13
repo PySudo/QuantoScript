@@ -492,8 +492,12 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
                 }
             } else if (iterable.type == VALUE_DICT) {
                 for (size_t n = 0; n < iterable.as.dict.count; n++) {
-                    if (index_name) env_set(env, index_name, make_integer((long)n + 1));
-                    env_set(env, item_name, make_string_owned(qs_strdup(iterable.as.dict.items[n].key)));
+                    if (index_name) {
+                        env_set(env, index_name, make_string_owned(qs_strdup(iterable.as.dict.items[n].key)));
+                        env_set(env, item_name, clone_value(iterable.as.dict.items[n].value));
+                    } else {
+                        env_set(env, item_name, make_string_owned(qs_strdup(iterable.as.dict.items[n].key)));
+                    }
                     g_loop_depth++;
                     if (!execute_range(program, env, loop_body_start, loop_body_end, err)) {
                         g_loop_depth--;

@@ -834,7 +834,7 @@ int main(int argc, char **argv) {
     if (sandbox) {
         g_sandbox_mode = 1;
         if (sandbox_path_idx > 0) {
-            strncpy(g_sandbox_path, argv[sandbox_path_idx], sizeof(g_sandbox_path) - 1);
+            sandbox_set_root(argv[sandbox_path_idx]);
         }
     }
 

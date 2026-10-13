@@ -359,7 +359,7 @@ A stateful WebSocket client.
 ```qscript
 from "stdlib/websocket.qs" import try_connect, send, recv, close, set_timeout
 
-ws = try_connect("ws://echo.websocket.org")
+ws = try_connect("wss://echo.websocket.org")
 if ws == null {
     print("could not connect")
 } else {

@@ -115,9 +115,11 @@ try {
 }
 ```
 
-> Keep `try` / `oops` blocks on multiple lines. The tree-walk parser does not
-> accept single-line `try` / `oops` syntax — see
-> [Style and Limits](20-style-and-limits.md#known-limitations).
+Single-line `try` / `oops` blocks are also accepted:
+
+```qscript
+try { print(check_positive(42)) } oops e { print("failed:", e) }
+```
 
 ---
 

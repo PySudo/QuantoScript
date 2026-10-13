@@ -454,8 +454,13 @@ gcc -std=c99 -O2 -Isrc src/quanto.c -o qs \
 
 ```bash
 gcc -std=c99 -O2 -Isrc src/quanto.c -o qs.exe \
-    -lssl -lcrypto -lws2_32 -lwinhttp -lwininet -lcrypt32
+    -lssl -lcrypto -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt -lregex
 ```
+
+> The `-lregex` flag (package `mingw-w64-ucrt-x86_64-libsystre`) enables the real
+> regular-expression back-end for `regex_match` / `regex_find` / `regex_replace`.
+> It is optional: without it those built-ins fall back to literal substring
+> matching. The `Makefile` detects it automatically.
 
 ### Using Make (recommended)
 

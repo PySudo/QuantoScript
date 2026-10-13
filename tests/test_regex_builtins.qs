@@ -1,0 +1,13 @@
+print("regex_match digit:", regex_match("[0-9]+", "abc123"))
+print("regex_match anchored yes:", regex_match("^[a-z]+$", "abc"))
+print("regex_match anchored no:", regex_match("^[a-z]+$", "abc1"))
+print("regex_match any:", regex_match("a.c", "abc"))
+print("regex_match any short:", regex_match("a.c", "ac"))
+print("regex_match case-insensitive:", regex_match("(?i)foo", "xxFOOyy"))
+print("regex_find repeats:", regex_find("[0-9]+", "a1b22c333"))
+print("regex_find none:", regex_find("[0-9]+", "abcdef"))
+print("regex_replace digits:", regex_replace("[0-9]+", "#", "a1b22"))
+print("regex_replace words:", regex_replace("[aeiou]", "", "hello world"))
+print("regex_replace no match:", regex_replace("[0-9]+", "#", "abc"))
+
+print("regex tests done")

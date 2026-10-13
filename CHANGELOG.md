@@ -2,6 +2,19 @@
 
 All notable changes to QuantoScript will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- WebSocket client now supports secure `wss://` connections (OpenSSL TLS handshake) and connects over IPv6 as well as IPv4; `ws_connect` now reports that it expects a `ws://` or `wss://` URL.
+- `regex_match` / `regex_find` / `regex_replace` now use a real POSIX regular-expression engine on Windows (via the optional `libsystre`/`libregex` package) instead of literal substring matching, falling back to substring matching only where POSIX regex is unavailable. `regex_replace` previously performed a literal substring replacement, and its documented argument order was wrong.
+- `--sandbox <dir>` now confines every filesystem built-in (`sys_read`, `sys_write`, `sys_exists`, `sys_mkdir`, `sys_remove`, `sys_rename`, `sys_is_dir`, `sys_list_dir`, `sys_chdir`) and `cwd()` to the sandbox root; absolute paths and `..` escapes are rejected with `access denied: sandbox mode`.
+- Map `extend` now merges a map argument into a map receiver instead of raising a syntax error.
+- `repeat key, value -> map` now yields `[key, value]` pairs when iterating over maps.
+- Lambdas with braced multi-statement bodies can now be passed to calls and executed.
+
+### Tooling
+- The `Makefile` and `qs compile` now probe for POSIX regex (`<regex.h>`) and link `libregex` only when it is available; CI installs `mingw-w64-*-libsystre` so released Windows binaries include real regex support.
+
 ## [1.1.0] — 2026-10-13
 
 ### Highlights

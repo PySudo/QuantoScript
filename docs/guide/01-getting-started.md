@@ -83,7 +83,7 @@ $ qs
 >>> print(x)
 42
 >>> func add(a, b) { return a + b }
->>> add(3, 4)
+>>> print(add(3, 4))
 7
 >>> exit
 ```

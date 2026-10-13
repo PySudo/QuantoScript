@@ -26,6 +26,8 @@ if(WIN32)
 
     if(MSVC)
         target_compile_definitions(qs PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_link_libraries(qs PRIVATE regex)
     endif()
 else()
     find_package(Threads REQUIRED)

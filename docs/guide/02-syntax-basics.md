@@ -122,7 +122,7 @@ without escaping:
 ```qscript
 single = 'hello'
 double = "world"
-funny  = 'i use " inside this string.'
+funny  = "i use ' inside this string."
 ```
 
 See [Strings](05-strings.md) for escape sequences, indexing, and methods.

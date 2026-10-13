@@ -727,11 +727,13 @@ static int parse_primary(Parser *parser, Value *out) {
         }
 
         if (parser->text[parser->pos] != '(') {
-            const char *canon = qs_type_alias(name);
-            if (canon) {
-                *out = make_string_owned(qs_strdup(canon));
-                free(name);
-                return 1;
+            if (find_variable_scoped(parser->env, name, NULL) < 0) {
+                const char *canon = qs_type_alias(name);
+                if (canon) {
+                    *out = make_string_owned(qs_strdup(canon));
+                    free(name);
+                    return 1;
+                }
             }
         }
 
@@ -1045,6 +1047,17 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
     }
 
     if (strcmp(method, "extend") == 0) {
+        if (out->type == VALUE_DICT) {
+            if (args->count != 1 || args->items[0].type != VALUE_DICT) {
+                parser_error(parser, "extend needs one map");
+                return 0;
+            }
+            for (size_t i = 0; i < args->items[0].as.dict.count; i++) {
+                dict_set(&out->as.dict, args->items[0].as.dict.items[i].key,
+                         clone_value(args->items[0].as.dict.items[i].value));
+            }
+            return 1;
+        }
         if (out->type != VALUE_LIST) {
             parser_error(parser, "extend works only on lists");
             return 0;

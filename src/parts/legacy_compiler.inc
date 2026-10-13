@@ -1117,9 +1117,14 @@ static QS_UNUSED_FN int compile_file(const char *input_path, const char *output_
 
     char command[8192];
 #ifdef _WIN32
+#if QS_HAVE_POSIX_REGEX
+    const char *regex_flag = " -lregex";
+#else
+    const char *regex_flag = "";
+#endif
     snprintf(command, sizeof(command),
-             "gcc -std=c99 -O2 -DNDEBUG -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto -lws2_32 -lwinhttp -lwininet",
-             runtime_dir, generated_path, output_path);
+             "gcc -std=c99 -O2 -DNDEBUG -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt%s",
+             runtime_dir, generated_path, output_path, regex_flag);
 #else
     snprintf(command, sizeof(command),
              "gcc -std=c99 -O2 -DNDEBUG -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto",
