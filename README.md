@@ -2,9 +2,9 @@
 
 # QuantoScript
 
-**A small, readable scripting language with a dual execution engine.**
+**A small, readable scripting language with three execution engines.**
 
-Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter *and* a bytecode VM · an optional native-C compiler.
+Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter, a bytecode VM, and an optional native-C compiler.
 
 [![CI](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml/badge.svg)](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml)
 [![version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
@@ -43,9 +43,8 @@ Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a t
 
 QuantoScript is a small, embeddable scripting language designed for readability and
 simplicity — think Python's clarity with a simpler, brace-based syntax. It ships with
-two interchangeable execution backends (a tree-walk interpreter for fast iteration and
-a bytecode VM for performance) plus an optional native-C compiler for compute-heavy
-numeric code.
+three execution engines: a tree-walk interpreter for fast iteration, a bytecode VM
+for performance, and an optional native-C compiler for compute-heavy numeric code.
 
 | | |
 |---|---|
@@ -53,7 +52,7 @@ numeric code.
 | **Friendly keywords** | `maybe` instead of `elif`, `oops` instead of `except`. |
 | **1-based indexing** | Lists and strings start at index `1`. |
 | **Shared object identity** | Class instances are references, not copies. |
-| **Dual engine** | The same program runs on the interpreter or the bytecode VM with identical output. |
+| **Matching engines** | The same program runs on the interpreter or the bytecode VM with identical output. |
 | **Native fast-path** | Arithmetic-heavy code can compile to C for a ~10× speedup. |
 | **Single-file core** | The whole language is one C99 amalgamation — easy to embed and vendor. |
 
@@ -80,10 +79,10 @@ irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1 | iex
 
 Then open a new terminal and run `qs --help`.
 
-> Prebuilt binaries are provided for macOS (Apple Silicon), Linux (x86-64 and
-> ARM64), and Windows (x86-64). On an Intel Mac the installer will ask you to
-> [build from source](#building-from-source) until a prebuilt Intel binary is
-> published.
+> Prebuilt binaries are provided for macOS (Apple Silicon), Linux (x86-64), and
+> Windows (x86-64). On Intel Macs and ARM64 Linux, the installer will ask you to
+> [build from source](#building-from-source) until binaries for those platforms
+> are published.
 
 <details>
 <summary><b>Installer options</b></summary>
@@ -228,14 +227,14 @@ c.name = "Bob"
 p.greet()           # Hi, I'm Bob
 ```
 
-> **Note:** Method bodies must use multi-line syntax — one statement per line.
+> **Note:** Put each statement in a method body on its own line — semicolon-separated statements are not supported.
 
 ### Collections
 
 ```qscript
 nums = [3, 1, 4, 1, 5]
 print(len(nums))            # 5
-nums.push(9)
+nums.append(9)
 print(nums.contains(4))     # true
 
 user = {"name": "QS", "version": 1}
@@ -247,9 +246,11 @@ print(user.keys())          # [name, version]
 
 | Type | Methods |
 |------|---------|
-| String | `upper` · `lower` · `title` · `len` · `contains` · `replace` · `startsWith` · `endsWith` · `split` |
-| List | `len` · `push` / `append` · `pop` · `contains` · `index` · `remove` |
-| Map | `keys` · `values` · `items` · `has` · `remove` · `len` |
+| String | `title` · `contains` · `replace` · `startsWith` · `endsWith` · `split` · `join` · `indexOf` · `substring` · `trimStart` · `trimEnd` · `repeat` · `reverse` |
+| List | `append` · `extend` · `sort` · `contains` · `flatten` · `map` · `filter` · `find` · `find_type` · `sum` |
+| Map | `keys` · `values` · `items` · `has` · `remove` · `extend` |
+
+`len(value)` is a built-in function (not a method) that works on strings and lists.
 
 See [The QuantoScript Guide](docs/guide/README.md) for the complete language reference.
 
@@ -257,7 +258,7 @@ See [The QuantoScript Guide](docs/guide/README.md) for the complete language ref
 
 ## Execution Engines
 
-The same source runs on either backend and produces identical output.
+The interpreter and the bytecode VM run the same source and produce identical output.
 
 | Engine | Command | Best for |
 |--------|---------|----------|
@@ -314,12 +315,12 @@ User code  →  stdlib modules  →  native runtime  →  OS
 
 ```qscript
 from "stdlib/http.qs"      import get, post
-from "stdlib/json.qs"      import parse_json, to_json
+from "stdlib/json.qs"      import parse, stringify
 from "stdlib/os.qs"        import run, capture, cwd, chdir, exists
 from "stdlib/fs.qs"        import read, write, list_dir
 from "stdlib/text.qs"      import lower, upper, split
 from "stdlib/time.qs"      import now, localtime
-from "stdlib/log.qs"       import log_info, log_error
+from "stdlib/log.qs"       import info, warn, error
 from "stdlib/websocket.qs" import connect, send, recv, close
 ```
 
@@ -332,8 +333,8 @@ resp = get("https://httpbin.org/get")
 print(resp)
 
 # JSON
-from "stdlib/json.qs" import parse_json
-data = parse_json("{\"key\": \"value\"}")
+from "stdlib/json.qs" import parse
+data = parse("{\"key\": \"value\"}")
 
 # Process execution
 from "stdlib/os.qs" import run, capture, exists
@@ -344,7 +345,7 @@ print(exists("gcc"))                # true / false
 
 | Module | Purpose |
 |--------|---------|
-| `core.qs` | Core helpers and assertions |
+| `core.qs` | Environment-variable helpers (`env`) |
 | `math.qs` | Numeric utilities |
 | `text.qs` | String processing |
 | `fs.qs` | File system operations |
@@ -353,6 +354,7 @@ print(exists("gcc"))                # true / false
 | `net.qs` | Low-level networking |
 | `websocket.qs` | WebSocket client |
 | `json.qs` | JSON parse / stringify |
+| `url.qs` | URL percent-encoding (`url_encode`, `url_decode`) |
 | `time.qs` | Time and clock operations |
 | `log.qs` | Structured logging |
 | `random.qs` | Pseudo-random numbers |
@@ -517,15 +519,16 @@ build/              Build output (gitignored)
 
 This is a **v1.1.0** release. The following are known and tracked:
 
-- **Closures** with captured variables do not work — inner functions capturing outer
-  locals return `null`.
-- **Class method bodies** must be written one statement per line (multi-line syntax).
+- **Closures** that capture an enclosing function's local variables work in the
+  tree-walk interpreter but not in the bytecode VM, which reports an unknown variable.
+  Nested `func` declarations are not supported.
+- **Class method bodies** take one statement per line; semicolon-separated statements
+  are not supported.
 - **Return type annotations** are parsed but not yet enforced.
 - **Async/await is not functional.** The `stdlib/async.qs` task queue hangs with two or
   more tasks and can crash non-deterministically under load. Single-task
   `spawn`/`run`/`result` work. See
   [Standard Library § async](docs/guide/14-standard-library.md#async).
-- The tree-walk parser does not support single-line `try`/`oops` syntax.
 - **Python embedding** requires the `-DQS_PYTHON` build flag and Python headers.
 
 ---

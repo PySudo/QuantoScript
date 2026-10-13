@@ -29,6 +29,7 @@ all_profiling.json
 
 # IDE
 .vscode/
+vscode/
 .idea/
 *.swp
 *~
