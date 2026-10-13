@@ -21,12 +21,14 @@ from "stdlib/fs.qs" import *
 | `core.qs` | `env` | Environment variable access |
 | `fs.qs` | `exists`, `read`, `write`, `mkdir`, `remove`, `rename`, `is_dir`, `list_dir`, `basename`, `dirname`, `extension`, `join_path` | File system operations and path helpers |
 | `http.qs` | `get`, `post`, `put`, `delete`, `patch` | HTTP client (auto-JSON for map bodies) |
+| `url.qs` | `url_encode`, `url_decode` | Percent-encoding for URLs |
 | `json.qs` | `parse`, `stringify` | JSON encoding/decoding |
 | `log.qs` | `debug`, `info`, `warn`, `error` | Timestamped logging |
 | `math.qs` | `min`, `max`, `clamp` | Numeric utilities |
+| `random.qs` | `seed`, `randint`, `randrange`, `choice`, `shuffle`, `sample` | Reproducible pseudo-random numbers |
 | `net.qs` | `send`, `send_json`, `test` | Raw TCP networking |
 | `text.qs` | `lower`, `upper`, `trim`, `split` | String manipulation |
-| `time.qs` | `now`, `localtime`, `format`, `parse`, `year`, `month`, `day`, `hour`, `minute`, `second`, `weekday`, `yearday`, `now_str`, `today_str`, `diff_seconds`, `add_seconds`, `add_minutes`, `add_hours`, `add_days` | Date/time operations |
+| `time.qs` | `now`, `sleep`, `localtime`, `format`, `parse`, `year`, `month`, `day`, `hour`, `minute`, `second`, `weekday`, `yearday`, `now_str`, `today_str`, `diff_seconds`, `add_seconds`, `add_minutes`, `add_hours`, `add_days` | Date/time operations |
 | `websocket.qs` | `connect`, `try_connect`, `send`, `recv`, `send_json`, `recv_json`, `close`, `set_timeout`, `is_open`, `state` | WebSocket client |
 | `async.qs` | `spawn`, `run`, `result`, `status`, `run_all` | Cooperative multitasking |
 | `os.qs` | `run`, `capture`, `cwd`, `chdir`, `exists` | Process execution and environment |
@@ -84,6 +86,15 @@ from "stdlib/time.qs" import now_str, year, month, day
 
 print("Now:", now_str())
 print("Date:", year(), "-", month(), "-", day())
+```
+
+### URL encoding
+
+```qs
+from "stdlib/url.qs" import url_encode, url_decode
+
+print(url_encode("a b&c=d"))   # a%20b%26c%3Dd
+print(url_decode("a%20b%26c%3Dd"))  # a b&c=d
 ```
 
 ### Logging

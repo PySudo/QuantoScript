@@ -1,7 +1,5 @@
-// Decode escape sequences in a string literal (after quote stripping).
-// Returns a newly allocated decoded string.
 static char *unescape_string(const char *raw, size_t raw_len, ParseError *err) {
-    // Worst case: every char is an escape (1 input -> 1 output), so output <= raw_len
+    (void)err;
     char *out = malloc(raw_len + 1);
     if (!out) { fprintf(stderr, "out of memory\n"); exit(2); }
     size_t oi = 0;
@@ -17,7 +15,7 @@ static char *unescape_string(const char *raw, size_t raw_len, ParseError *err) {
                 case '\'': out[oi++] = '\''; i++; break;
                 case '0':  out[oi++] = '\0'; i++; break;
                 default:
-                    // Unknown escape — keep the backslash and the character
+
                     out[oi++] = '\\';
                     out[oi++] = next;
                     i++;
@@ -38,11 +36,10 @@ static int parse_string(Parser *parser, Value *out) {
 
     while (parser->text[cursor]) {
         if (parser->text[cursor] == '\\' && parser->text[cursor + 1]) {
-            cursor += 2; // skip escaped char (always, including closing quote)
+            cursor += 2;
             continue;
         }
         if (parser->text[cursor] == quote && quote_can_close(parser->text, cursor, ']')) {
-            // Decode escape sequences in the raw string content
             char *raw = qs_strndup(parser->text + start + 1, cursor - start - 1);
             char *decoded = unescape_string(raw, cursor - start - 1, parser->err);
             free(raw);
@@ -69,7 +66,7 @@ static int parse_number(Parser *parser, Value *out) {
         parser_error(parser, "number is out of range");
         return 0;
     }
-    // Check for floating point
+
     if (*end == '.' && isdigit((unsigned char)end[1])) {
         errno = 0;
         double fvalue = strtod(parser->text + parser->pos, &end);
@@ -179,6 +176,31 @@ static int type_matches(const char *type, Value value) {
         cursor = pipe + 1;
     }
     return 0;
+}
+
+static const char *qs_type_alias(const char *name) {
+    if (!name) {
+        return NULL;
+    }
+    if (strcmp(name, "int") == 0 || strcmp(name, "integer") == 0) {
+        return "int";
+    }
+    if (strcmp(name, "float") == 0 || strcmp(name, "double") == 0 || strcmp(name, "number") == 0) {
+        return "float";
+    }
+    if (strcmp(name, "str") == 0 || strcmp(name, "string") == 0) {
+        return "string";
+    }
+    if (strcmp(name, "bool") == 0 || strcmp(name, "boolean") == 0) {
+        return "bool";
+    }
+    if (strcmp(name, "list") == 0) {
+        return "list";
+    }
+    if (strcmp(name, "map") == 0 || strcmp(name, "dict") == 0) {
+        return "map";
+    }
+    return NULL;
 }
 
 static const char *value_type_name(Value value) {
@@ -322,8 +344,10 @@ static int call_user_function(Parser *parser, Function *function, CallArgList *a
 
     Environment local = {0};
 
-    for (size_t i = 0; i < parser->env->count; i++) {
-        env_set(&local, parser->env->items[i].name, clone_value(parser->env->items[i].value));
+    if (function->is_module) {
+        for (size_t i = 0; i < parser->env->count; i++) {
+            env_set(&local, parser->env->items[i].name, clone_value(parser->env->items[i].value));
+        }
     }
 
     size_t positional_index = 0;
@@ -439,7 +463,16 @@ static int call_user_function(Parser *parser, Function *function, CallArgList *a
     if (native_context) {
         g_native_access_depth++;
     }
+    Function *previous_function = g_current_function;
+    g_current_function = function;
+    if (function->is_module) {
+        g_module_func_depth++;
+    }
     int ok = execute_range(function->program, &local, function->body_start, function->body_end, parser->err);
+    if (function->is_module) {
+        g_module_func_depth--;
+    }
+    g_current_function = previous_function;
     if (native_context) {
         g_native_access_depth--;
     }
@@ -484,7 +517,6 @@ static int call_lambda(Parser *parser, Value *lambda, CallArgList *args, Value *
         return 0;
     }
 
-    // Type check parameters
     for (size_t i = 0; i < lambda->as.lambda.param_count; i++) {
         if (lambda->as.lambda.param_types && lambda->as.lambda.param_types[i]) {
             if (!type_matches(lambda->as.lambda.param_types[i], args->items[i].value)) {
@@ -496,21 +528,19 @@ static int call_lambda(Parser *parser, Value *lambda, CallArgList *args, Value *
         }
     }
 
-    // Create local environment from closure
     Environment local = {0};
-    if (lambda->as.lambda.closure) {
-        for (size_t i = 0; i < lambda->as.lambda.closure->count; i++) {
-            env_set(&local, lambda->as.lambda.closure->items[i].name,
-                    clone_value(lambda->as.lambda.closure->items[i].value));
+    Environment *capture = lambda->as.lambda.closure ? lambda->as.lambda.closure : parser->env;
+    if (capture) {
+        for (size_t i = 0; i < capture->count; i++) {
+            env_set(&local, capture->items[i].name,
+                    clone_value(capture->items[i].value));
         }
     }
 
-    // Bind parameters
     for (size_t i = 0; i < lambda->as.lambda.param_count; i++) {
         env_set(&local, lambda->as.lambda.param_names[i], clone_value(args->items[i].value));
     }
 
-    // Parse and evaluate body
     Parser lambda_parser = {lambda->as.lambda.body, 0, parser->line, &local, parser->err, -1};
 
     int saved_module_mode = g_module_mode;

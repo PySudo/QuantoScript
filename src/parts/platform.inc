@@ -1,4 +1,3 @@
-// Feature test macros for POSIX (must be before any system headers)
 #ifndef _WIN32
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -17,9 +16,6 @@
 #include <time.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-
-// Python embedding support (optional, requires -DQS_PYTHON and Python headers)
-// To build with Python: gcc -DQS_PYTHON -I<python-include> ... -lpython3.x
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -67,11 +63,11 @@ WINBASEAPI BOOL WINAPI HttpQueryInfoA(HINTERNET, DWORD, LPVOID, LPDWORD, LPDWORD
 typedef int qs_socket_t;
 #define QS_INVALID_SOCKET -1
 #define qs_close_socket close
-// Cross-platform socket error helpers
+
 #define qs_socket_errno() errno
 #define QS_WOULDBLOCK EWOULDBLOCK
 #define QS_IN_PROGRESS EINPROGRESS
 #define QS_TIMEDOUT ETIMEDOUT
-// Cross-platform timeout type
+
 typedef struct timeval qs_timeout_t;
 #endif

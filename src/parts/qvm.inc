@@ -1,14 +1,3 @@
-// QuantoScript QVM — Bytecode Serialization, Loading, and Validation
-// Format version 4. Global constant pool, string deduplication, absolute indexing.
-//
-// Binary Format:
-//   Header:   magic(4) version(4) flags(4) crc(4) pool_count(4) main_count(4) func_count(4) reserved(4)
-//   Pool:     pool_count values, each [tag:u8] [data...]
-//   Main:     main_count instructions, each [op:u8][arg_i:i32][const_idx:i32][line:i32]
-//   Funcs:    func_count entries, each [name_len:u32][name:bytes][pcount:u32][bcount:u32][slot_count:i32][param_idx:i32*N]
-//   Bodies:   func body instructions, each [op:u8][arg_i:i32][const_idx:i32][line:u32]
-//   Source:   [path_len:u32][path:bytes] (if QVM_FLAG_HAS_SOURCE)
-
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -25,10 +14,9 @@
 #define QVM_MAX_FUNCS      256
 #define QVM_MAX_FUNC_BODY  65536
 #define QVM_MAX_NAME_LEN   4096
-#define QVM_MAX_STRING_LEN (1 << 20)  // 1 MB max string
+#define QVM_MAX_STRING_LEN (1 << 20)
 #define QVM_HEADER_SIZE    32
 
-// ---- CRC32 ----
 static uint32_t qvm_crc32(const unsigned char *data, size_t len) {
     uint32_t crc = 0xFFFFFFFF;
     for (size_t i = 0; i < len; i++) {
@@ -38,10 +26,6 @@ static uint32_t qvm_crc32(const unsigned char *data, size_t len) {
     }
     return ~crc;
 }
-
-// ---- Little-endian I/O with error checking ----
-// All read functions return 0 on read error or EOF, 1 on success.
-// The out parameter receives the value.
 
 static int qr_u8_f(FILE *f, uint8_t *out) {
     return fread(out, 1, 1, f) == 1;
@@ -63,7 +47,6 @@ static int qr_f64_f(FILE *f, double *out) {
     return fread(out, 8, 1, f) == 1;
 }
 
-// Legacy wrappers (used by serializer which doesn't need error checking)
 static QS_UNUSED_FN uint8_t  qr_u8(FILE *f)  { uint8_t v = 0;  qr_u8_f(f, &v);  return v; }
 static QS_UNUSED_FN uint32_t qr_u32(FILE *f) { uint32_t v = 0; qr_u32_f(f, &v); return v; }
 static QS_UNUSED_FN int32_t  qr_i32(FILE *f) { int32_t v = 0;  qr_i32_f(f, &v); return v; }
@@ -74,7 +57,24 @@ static void qw_i32(FILE *f, int32_t v)  { fwrite(&v, 4, 1, f); }
 static void qw_i64(FILE *f, int64_t v)  { fwrite(&v, 8, 1, f); }
 static void qw_f64(FILE *f, double v)   { fwrite(&v, 8, 1, f); }
 
-// ---- Value I/O ----
+static void qvm_write_str(FILE *f, const char *s) {
+    uint32_t len = s ? (uint32_t)strlen(s) : 0;
+    qw_u32(f, len);
+    if (len) fwrite(s, 1, len, f);
+}
+
+static int qvm_read_str(FILE *f, char **out) {
+    uint32_t len = 0;
+    if (!qr_u32_f(f, &len)) return 0;
+    if (len == 0) { *out = NULL; return 1; }
+    if (len > (1u << 24)) return 0;
+    char *s = malloc(len + 1);
+    if (!s) return 0;
+    if (fread(s, 1, len, f) != len) { free(s); return 0; }
+    s[len] = '\0';
+    *out = s;
+    return 1;
+}
 
 static void qvm_write_value(FILE *f, Value v) {
     switch (v.type) {
@@ -87,6 +87,32 @@ static void qvm_write_value(FILE *f, Value v) {
             uint32_t len = v.as.string ? (uint32_t)strlen(v.as.string) : 0;
             qw_u32(f, len);
             if (len > 0) fwrite(v.as.string, 1, len, f);
+            break;
+        }
+        case VALUE_LAMBDA: {
+            qw_u8(f, 0x05);
+            qvm_write_str(f, v.as.lambda.body);
+            qw_u32(f, (uint32_t)v.as.lambda.param_count);
+            for (size_t i = 0; i < v.as.lambda.param_count; i++) {
+                qvm_write_str(f, (v.as.lambda.param_names) ? v.as.lambda.param_names[i] : NULL);
+                qvm_write_str(f, (v.as.lambda.param_types && v.as.lambda.param_types[i]) ? v.as.lambda.param_types[i] : NULL);
+            }
+            qw_u8(f, v.as.lambda.is_module ? 1 : 0);
+            break;
+        }
+        case VALUE_LIST: {
+            qw_u8(f, 0x06);
+            qw_u32(f, (uint32_t)v.as.list.count);
+            for (size_t i = 0; i < v.as.list.count; i++) qvm_write_value(f, v.as.list.items[i]);
+            break;
+        }
+        case VALUE_DICT: {
+            qw_u8(f, 0x07);
+            qw_u32(f, (uint32_t)v.as.dict.count);
+            for (size_t i = 0; i < v.as.dict.count; i++) {
+                qvm_write_str(f, v.as.dict.items[i].key);
+                qvm_write_value(f, v.as.dict.items[i].value);
+            }
             break;
         }
         default: qw_u8(f, 0x00); break;
@@ -113,24 +139,67 @@ static int qvm_read_value_f(FILE *f, Value *out) {
             *out = make_string_owned(buf);
             return 1;
         }
-        default: *out = make_null(); return 1;  // unknown tag → null (forward compat)
+        case 0x05: {
+            Value lam; memset(&lam, 0, sizeof(lam));
+            lam.type = VALUE_LAMBDA;
+            char *body = NULL;
+            if (!qvm_read_str(f, &body)) return 0;
+            lam.as.lambda.body = body;
+            uint32_t pc = 0;
+            if (!qr_u32_f(f, &pc)) { free(body); return 0; }
+            lam.as.lambda.param_count = pc;
+            lam.as.lambda.param_names = pc ? calloc(pc, sizeof(char *)) : NULL;
+            lam.as.lambda.param_types = pc ? calloc(pc, sizeof(char *)) : NULL;
+            for (uint32_t i = 0; i < pc; i++) {
+                if (!qvm_read_str(f, &lam.as.lambda.param_names[i])) return 0;
+                if (!qvm_read_str(f, &lam.as.lambda.param_types[i])) return 0;
+            }
+            uint8_t im = 0;
+            if (!qr_u8_f(f, &im)) return 0;
+            lam.as.lambda.is_module = im;
+            *out = lam;
+            return 1;
+        }
+        case 0x06: {
+            uint32_t n = 0;
+            if (!qr_u32_f(f, &n)) return 0;
+            Value lv = make_list_empty();
+            for (uint32_t i = 0; i < n; i++) {
+                Value item;
+                if (!qvm_read_value_f(f, &item)) return 0;
+                list_push(&lv.as.list, item);
+            }
+            *out = lv;
+            return 1;
+        }
+        case 0x07: {
+            uint32_t n = 0;
+            if (!qr_u32_f(f, &n)) return 0;
+            Value dv = make_dict_empty();
+            for (uint32_t i = 0; i < n; i++) {
+                char *k = NULL;
+                if (!qvm_read_str(f, &k)) return 0;
+                Value item;
+                if (!qvm_read_value_f(f, &item)) { free(k); return 0; }
+                dict_set(&dv.as.dict, k ? k : "", item);
+                free(k);
+            }
+            *out = dv;
+            return 1;
+        }
+        default: *out = make_null(); return 1;
     }
 }
 
-// Legacy wrapper
 static QS_UNUSED_FN Value qvm_read_value(FILE *f) {
     Value v = {0};
     qvm_read_value_f(f, &v);
     return v;
 }
 
-// ---- Opcode validation ----
-
 static int qvm_valid_opcode(uint8_t op) {
-    return op <= OP_SET_FIELD;  // OP_SET_FIELD is the last valid opcode
+    return op <= OP_CALL_KW;
 }
-
-// ---- Serialize ----
 
 static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs, int func_count,
                          const char *source_path, const char *output_path) {
@@ -139,11 +208,9 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
     if (!pool) return 0;
     int pool_count = 0;
 
-    // Main constants (indices 0..main_const_count-1)
     for (size_t i = 0; i < prog->const_count && pool_count < QVM_MAX_GLOBAL; i++)
         pool[pool_count++] = clone_value(prog->constants[i]);
 
-    // Main instruction string args — deduplicate against pool
     int *main_arg_indices = calloc(prog->count, sizeof(int));
     for (size_t i = 0; i < prog->count; i++) {
         Value arg = prog->instructions[i].arg;
@@ -168,7 +235,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    // Function constants (appended after main section)
     int *func_const_start = calloc(func_count, sizeof(int));
     int **func_local_to_global = calloc(func_count, sizeof(int*));
     for (int fi = 0; fi < func_count; fi++) {
@@ -180,7 +246,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    // Function instruction string args (appended after func constants)
     int *func_arg_start = calloc(func_count, sizeof(int));
     int **func_arg_indices = calloc(func_count, sizeof(int*));
     for (int fi = 0; fi < func_count; fi++) {
@@ -190,14 +255,14 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
             Value arg = funcs[fi].body.instructions[i].arg;
             if (arg.type == VALUE_STRING && arg.as.string) {
                 int found = -1;
-                // Search func-specific section first
+
                 for (int ci = func_const_start[fi]; ci < pool_count; ci++) {
                     if (pool[ci].type == VALUE_STRING && pool[ci].as.string &&
                         strcmp(pool[ci].as.string, arg.as.string) == 0) {
                         found = ci; break;
                     }
                 }
-                // Then search global pool
+
                 if (found < 0) {
                     for (int ci = 0; ci < func_const_start[fi]; ci++) {
                         if (pool[ci].type == VALUE_STRING && pool[ci].as.string &&
@@ -220,7 +285,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    // Parameter name indices
     int *param_indices_flat = calloc(func_count * 32, sizeof(int));
     for (int fi = 0; fi < func_count; fi++) {
         for (int pi = 0; pi < funcs[fi].param_count && pi < 32; pi++) {
@@ -234,7 +298,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    // CRC32 of source file
     uint32_t crc = 0;
     int has_crc = 0;
     if (source_path) {
@@ -257,11 +320,9 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    // Write file
     FILE *f = fopen(output_path, "wb");
     if (!f) goto cleanup;
 
-    // Header (32 bytes): magic(4) + version(4) + flags(4) + crc(4) + pool_count(4) + main_count(4) + func_count(4) + reserved(4)
     uint32_t flags = 0;
     if (has_crc) flags |= QVM_FLAG_HAS_CRC;
     if (source_path) flags |= QVM_FLAG_HAS_SOURCE;
@@ -272,13 +333,11 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
     qw_u32(f, (uint32_t)pool_count);
     qw_u32(f, (uint32_t)prog->count);
     qw_u32(f, (uint32_t)func_count);
-    qw_u32(f, 0);  // reserved
+    qw_u32(f, 0);
 
-    // Global pool
     for (int i = 0; i < pool_count; i++)
         qvm_write_value(f, pool[i]);
 
-    // Main instructions: [op:u8][arg_i:i32][const_idx:i32][line:i32]
     for (size_t i = 0; i < prog->count; i++) {
         qw_u8(f, (uint8_t)prog->instructions[i].op);
         qw_i32(f, prog->instructions[i].arg_i);
@@ -286,7 +345,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         qw_i32(f, prog->instructions[i].line);
     }
 
-    // Function table entries
     for (int fi = 0; fi < func_count; fi++) {
         qw_u32(f, (uint32_t)strlen(funcs[fi].name));
         fwrite(funcs[fi].name, 1, strlen(funcs[fi].name), f);
@@ -297,7 +355,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
             qw_i32(f, param_indices_flat[fi * 32 + pi]);
     }
 
-    // Function body instructions
     for (int fi = 0; fi < func_count; fi++) {
         for (size_t i = 0; i < funcs[fi].body.count; i++) {
             Instruction *ins = &funcs[fi].body.instructions[i];
@@ -311,7 +368,6 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    // Source path (optional)
     if (source_path) {
         uint32_t plen = (uint32_t)strlen(source_path);
         qw_u32(f, plen);
@@ -336,7 +392,6 @@ cleanup:
     return (f != NULL);
 }
 
-// ---- Load ----
 typedef struct {
     BytecodeProgram main_prog;
     Value *pool;
@@ -374,7 +429,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
 
     memset(qvm, 0, sizeof(*qvm));
 
-    // Get file size for truncation check
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -383,7 +437,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
         fclose(f); return 0;
     }
 
-    // Read header
     uint32_t magic, version, flags, crc;
     if (!qr_u32_f(f, &magic) || !qr_u32_f(f, &version) ||
         !qr_u32_f(f, &flags) || !qr_u32_f(f, &crc)) {
@@ -405,28 +458,25 @@ static int qvm_load(const char *path, QVMFile *qvm) {
         fprintf(stderr, "qvm: failed to read counts\n");
         fclose(f); return 0;
     }
-    qr_u32(f);  // reserved
+    qr_u32(f);
 
-    // Sanity checks
     if (pool_count > QVM_MAX_POOL || inst_count > QVM_MAX_INSTR || func_count > QVM_MAX_FUNCS) {
         fprintf(stderr, "qvm: counts out of range (pool=%u inst=%u func=%u)\n", pool_count, inst_count, func_count);
         fclose(f); return 0;
     }
 
-    // Minimum size estimate
     long min_size = QVM_HEADER_SIZE;
-    // Pool: each value is at least 1 byte (tag)
+
     min_size += (long)pool_count;
-    // Instructions: 13 bytes each
+
     min_size += (long)inst_count * 13;
-    // Function table: at least 12 bytes per func (name_len + pcount + bcount + slot_count)
+
     min_size += (long)func_count * 12;
     if (file_size < min_size) {
         fprintf(stderr, "qvm: truncated file (%ld < %ld)\n", file_size, min_size);
         fclose(f); return 0;
     }
 
-    // ---- Read global pool ----
     Value *pool = calloc(pool_count, sizeof(Value));
     if (!pool) { fprintf(stderr, "qvm: out of memory\n"); fclose(f); return 0; }
     for (uint32_t i = 0; i < pool_count; i++) {
@@ -439,7 +489,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
     qvm->pool = pool;
     qvm->pool_count = (int)pool_count;
 
-    // ---- Read main instructions ----
     qvm->main_prog = (BytecodeProgram){0};
     qvm->main_prog.instructions = calloc(inst_count, sizeof(Instruction));
     if (!qvm->main_prog.instructions && inst_count > 0) {
@@ -472,7 +521,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
             qvm->main_prog.instructions[i].arg = make_null();
     }
 
-    // ---- Validate main instructions ----
     for (uint32_t i = 0; i < inst_count; i++) {
         Instruction *ins = &qvm->main_prog.instructions[i];
         switch (ins->op) {
@@ -506,7 +554,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
         }
     }
 
-    // ---- Read function table ----
     qvm->func_count = (int)func_count;
     qvm->funcs = calloc(func_count, sizeof(CompiledFunc));
     uint32_t *func_bcounts = calloc(func_count, sizeof(uint32_t));
@@ -574,7 +621,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
         }
     }
 
-    // ---- Read function bodies ----
     for (uint32_t fi = 0; fi < func_count; fi++) {
         uint32_t bcount = func_bcounts[fi];
         qvm->funcs[fi].body = (BytecodeProgram){0};
@@ -610,7 +656,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
                 qvm->funcs[fi].body.instructions[bi].arg = make_null();
         }
 
-        // Validate function body instructions
         for (uint32_t bi = 0; bi < bcount; bi++) {
             Instruction *ins = &qvm->funcs[fi].body.instructions[bi];
             switch (ins->op) {
@@ -640,7 +685,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
 
     free(func_bcounts);
 
-    // Read source path (optional, at end of file)
     long pos = ftell(f);
     if (pos < file_size) {
         uint32_t plen;
@@ -661,7 +705,6 @@ static int qvm_load(const char *path, QVMFile *qvm) {
     return 1;
 }
 
-// ---- Execute ----
 static QS_UNUSED_FN int run_qvm_file(const char *path) {
     QVMFile qvm = {0};
     if (!qvm_load(path, &qvm)) return 1;
@@ -685,14 +728,33 @@ static QS_UNUSED_FN int run_qvm_file(const char *path) {
     VM vm;
     vm_init(&vm, &qvm.main_prog, &env);
     g_vm_trace = g_trace_vm;
+    if (g_vm_source_dir) { free(g_vm_source_dir); g_vm_source_dir = NULL; }
+    if (qvm.source_path) g_vm_source_dir = path_dirname(qvm.source_path);
+
+    Program src_prog = {0};
+    int have_src = 0;
+    Program *saved_g_program = g_program;
+    if (qvm.source_path && load_program_file(qvm.source_path, &src_prog)) {
+        g_program = &src_prog;
+        strip_block_comments(&src_prog);
+        ParseError ferr = {0};
+        collect_functions(&src_prog, &ferr);
+        have_src = 1;
+    }
     int result = vm_execute(&vm);
+    g_program = saved_g_program;
+    if (have_src) free_program(&src_prog);
+    if (vm.pending_exception) {
+        fprintf(stderr, "%s\n", vm.exception_msg ? vm.exception_msg : "unhandled exception");
+        result = 1;
+    }
+    free(vm.exception_msg);
+    vm.exception_msg = NULL;
     g_vm_trace = 0;
     free_environment(&env);
     qvm_free(&qvm);
     return result;
 }
-
-// ---- Disassemble (professional --dump-bytecode output) ----
 
 static const char *qvm_value_repr(Value v) {
     static char buf[256];
@@ -738,7 +800,6 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
         fprintf(stderr, "\n");
     }
 
-    // Collect jump targets for label display
     int *labels = calloc(func->body.count, sizeof(int));
     for (size_t i = 0; i < func->body.count; i++) {
         Instruction *ins = &func->body.instructions[i];
@@ -755,14 +816,12 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
     for (size_t i = 0; i < func->body.count; i++) {
         Instruction *ins = &func->body.instructions[i];
 
-        // Label prefix
         if (labels[i]) {
             fprintf(stderr, "  L%zu:\n", i);
         }
 
         fprintf(stderr, "  %4zu| %-16s", i, opcode_name(ins->op));
 
-        // Argument column
         switch (ins->op) {
             case OP_LOAD_CONST:
                 fprintf(stderr, "  [%3d]", ins->arg_i);
@@ -818,10 +877,8 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
                 break;
         }
 
-        // Line number
         fprintf(stderr, " | L%-4d", ins->line);
 
-        // Inline comment
         fprintf(stderr, "\n");
     }
 
@@ -839,14 +896,11 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
         fprintf(stderr, "  Source: %s\n", qvm->source_path);
     fprintf(stderr, "========================================================\n");
 
-    // Constant pool
     if (qvm->pool_count > 0)
         qvm_disassemble_pool(qvm->pool, qvm->pool_count);
 
-    // Main program
     fprintf(stderr, "\nMain Program (%zu instructions):\n", qvm->main_prog.count);
 
-    // Collect jump targets
     int *labels = calloc(qvm->main_prog.count, sizeof(int));
     for (size_t i = 0; i < qvm->main_prog.count; i++) {
         Instruction *ins = &qvm->main_prog.instructions[i];
@@ -929,7 +983,6 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
     fprintf(stderr, "  ----+------------------+--------+------+----------------------------------------\n");
     free(labels);
 
-    // Function table
     if (qvm->func_count > 0) {
         fprintf(stderr, "\nFunction Table (%d functions):\n", qvm->func_count);
         fprintf(stderr, "  ----+------------------+--------+------+--------+-----------------------------------\n");
@@ -948,7 +1001,6 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
         fprintf(stderr, "  ----+------------------+--------+------+--------+-----------------------------------\n");
     }
 
-    // Function bodies
     for (int fi = 0; fi < qvm->func_count; fi++) {
         CompiledFunc *func = &qvm->funcs[fi];
         if (func->body.count == 0) continue;
@@ -965,7 +1017,6 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
             fprintf(stderr, "\n");
         }
 
-        // Collect jump targets
         int *flabels = calloc(func->body.count, sizeof(int));
         for (size_t i = 0; i < func->body.count; i++) {
             Instruction *ins = &func->body.instructions[i];

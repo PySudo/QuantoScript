@@ -1,7 +1,6 @@
 static void free_environment(Environment *env);
 static void free_value(Value value);
 
-// Object registry: tracks all live ObjectData for cleanup at exit
 #define MAX_OBJECTS 65536
 static ObjectData *g_object_registry[MAX_OBJECTS];
 static int g_object_count = 0;
@@ -29,7 +28,6 @@ static void object_registry_free_all(void) {
 }
 
 static void free_value(Value value) {
-    AUDIT_FREE_VALUE();
     if (value.type == VALUE_STRING) {
         free(value.as.string);
     } else if (value.type == VALUE_LIST) {
@@ -60,7 +58,6 @@ static void free_value(Value value) {
     } else if (value.type == VALUE_CLASS) {
         free(value.as.class_def.name);
     }
-    // VALUE_OBJECT: no-op — ObjectData lives until program exit
 }
 
 static Value make_integer(long integer) {
@@ -146,7 +143,6 @@ static Value make_object(const char *class_name) {
 }
 
 static Value clone_value(Value value) {
-    AUDIT_CLONE();
     Value copy;
     copy.type = value.type;
     if (value.type == VALUE_STRING) {
@@ -191,6 +187,8 @@ static Value clone_value(Value value) {
             copy.as.lambda.closure->count = value.as.lambda.closure->count;
             copy.as.lambda.closure->capacity = value.as.lambda.closure->count;
             copy.as.lambda.closure->items = calloc(copy.as.lambda.closure->count, sizeof(Variable));
+            copy.as.lambda.closure->slots = NULL;
+            copy.as.lambda.closure->slot_count = 0;
             for (size_t i = 0; i < copy.as.lambda.closure->count; i++) {
                 copy.as.lambda.closure->items[i].name = qs_strdup(value.as.lambda.closure->items[i].name);
                 copy.as.lambda.closure->items[i].value = clone_value(value.as.lambda.closure->items[i].value);
@@ -205,7 +203,6 @@ static Value clone_value(Value value) {
     } else if (value.type == VALUE_CLASS) {
         copy.as.class_def.name = qs_strdup(value.as.class_def.name);
     } else if (value.type == VALUE_OBJECT) {
-        // Shared identity: copy the pointer, no allocation
         copy.as.object.data = value.as.object.data;
     } else {
         copy.as.integer = value.as.integer;
@@ -213,7 +210,6 @@ static Value clone_value(Value value) {
     return copy;
 }
 
-// Task queue management
 static TaskQueue g_task_queue = {0};
 static int g_next_task_id = 1;
 
@@ -349,7 +345,6 @@ static int value_compare(Value left, Value right) {
 }
 
 static int find_variable(Environment *env, const char *name) {
-    AUDIT_FIND_VAR();
     for (size_t i = 0; i < env->count; i++) {
         if (env->items[i].name == name || strcmp(env->items[i].name, name) == 0) {
             return (int)i;
@@ -358,10 +353,23 @@ static int find_variable(Environment *env, const char *name) {
     return -1;
 }
 
-// Fast parameter initialization: directly append without lookup
-// Only safe when environment is known to be empty or parameter doesn't exist
+static int find_variable_scoped(Environment *env, const char *name, Environment **out_env) {
+    int idx = find_variable(env, name);
+    Environment *found = env;
+    if (idx < 0 && env != g_root_env && g_root_env &&
+        g_current_function && !g_current_function->is_module) {
+        idx = find_variable(g_root_env, name);
+        if (idx >= 0) {
+            found = g_root_env;
+        }
+    }
+    if (out_env) {
+        *out_env = found;
+    }
+    return idx;
+}
+
 static QS_UNUSED_FN void env_init_param(Environment *env, const char *name, Value value) {
-    AUDIT_ENV_SET();
     if (env->count == env->capacity) {
         size_t next_capacity = env->capacity ? env->capacity * 2 : 8;
         Variable *next = realloc(env->items, next_capacity * sizeof(Variable));
@@ -378,7 +386,6 @@ static QS_UNUSED_FN void env_init_param(Environment *env, const char *name, Valu
 }
 
 static void env_set(Environment *env, const char *name, Value value) {
-    AUDIT_ENV_SET();
     int index = find_variable(env, name);
     if (index >= 0) {
         free_value(env->items[index].value);
@@ -411,13 +418,7 @@ static QS_UNUSED_FN Variable *env_get_slot(Environment *env, const char *name) {
     return index >= 0 ? &env->items[index] : NULL;
 }
 
-// ---- Slot-based local variable access ----
-// These functions provide O(1) access to local variables without string comparison
-// Slots are stored inline in CallFrame (no heap allocation)
-
 static inline Value env_load_slot(Environment *env, int slot) {
-    // Slots are now in CallFrame.local_slots, accessed via frame pointer
-    // This function is kept for compatibility but actual access goes through frame
     return env->slots[slot];
 }
 
@@ -515,12 +516,10 @@ static void function_push(Function function) {
     g_functions.items[g_functions.count++] = function;
 }
 
-// Push function only if no function with the same name exists.
-// Returns 1 if pushed, 0 if skipped (name already taken).
 static int function_push_if_new(Function function) {
     for (size_t i = 0; i < g_functions.count; i++) {
         if (strcmp(g_functions.items[i].name, function.name) == 0) {
-            return 0;  // already exists — don't overwrite
+            return 0;
         }
     }
     if (g_functions.count == g_functions.capacity) {

@@ -5,6 +5,11 @@ func now() {
     return sys_time()
 }
 
+# Pause execution for the given number of milliseconds
+func sleep(milliseconds:int) {
+    return sys_sleep(milliseconds)
+}
+
 # Get local time as a map with year/month/day/hour/min/sec/wday/yday
 func localtime() {
     return sys_localtime()

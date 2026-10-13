@@ -1,8 +1,3 @@
-// QuantoScript Native Compiler - MVP
-// Generates standalone C code without runtime dependencies
-
-// ---- IR Data Structures ----
-
 typedef enum {
     IR_INT, IR_FLOAT, IR_BOOL, IR_STRING, IR_VOID, IR_UNKNOWN
 } IRType;
@@ -24,13 +19,13 @@ typedef enum {
 typedef struct {
     IROpcode op;
     IRType type;
-    int dst;        // destination register/label
-    int src1;       // source operand 1
-    int src2;       // source operand 2
-    long ival;      // integer constant
-    double fval;    // float constant
-    char *sval;     // string constant
-    int line;       // source line
+    int dst;
+    int src1;
+    int src2;
+    long ival;
+    double fval;
+    char *sval;
+    int line;
 } IRInstruction;
 
 typedef struct {
@@ -39,27 +34,25 @@ typedef struct {
     int capacity;
     int next_reg;
     int next_label;
-    // Constant pools
+
     long *int_consts;
     int int_const_count;
     double *float_consts;
     int float_const_count;
     char **string_consts;
     int string_const_count;
-    // Local variable tracking
+
     char **local_names;
     IRType *local_types;
     int local_count;
     int local_capacity;
-    // Register type tracking
+
     IRType *reg_types;
     int reg_capacity;
-    // Error tracking
+
     int has_error;
     char error_msg[256];
 } IRProgram;
-
-// ---- IR Helper Functions ----
 
 static void ir_init(IRProgram *prog) {
     prog->instrs = NULL;
@@ -97,7 +90,7 @@ static void ir_free(IRProgram *prog) {
 
 static int ir_alloc_reg(IRProgram *prog) {
     int reg = prog->next_reg++;
-    // Ensure reg_types array is large enough
+
     if (reg >= prog->reg_capacity) {
         int new_cap = prog->reg_capacity ? prog->reg_capacity * 2 : 16;
         prog->reg_types = realloc(prog->reg_types, new_cap * sizeof(IRType));
@@ -145,7 +138,6 @@ static void ir_emit(IRProgram *prog, IROpcode op, IRType type, int dst, int src1
     ins->src1 = src1;
     ins->src2 = src2;
 
-    // Track register type for dst
     if (dst >= 0 && dst < prog->reg_capacity) {
         prog->reg_types[dst] = type;
     }
@@ -157,8 +149,6 @@ static QS_UNUSED_FN void ir_emit_int(IRProgram *prog, int dst, long val) {
     IRInstruction *ins = &prog->instrs[prog->count - 1];
     ins->ival = val;
 }
-
-// ---- AST → IR Lowering ----
 
 static void ir_lower_block(ASTNode *block, IRProgram *prog);
 static int ir_lower_expr(ASTNode *node, IRProgram *prog);
@@ -194,7 +184,6 @@ static int ir_lower_expr(ASTNode *node, IRProgram *prog) {
             return r;
         }
         case AST_IDENT: {
-            // Find local slot for this variable
             int slot = -1;
             for (int i = 0; i < prog->local_count; i++) {
                 if (strcmp(prog->local_names[i], node->as.string) == 0) {
@@ -203,7 +192,6 @@ static int ir_lower_expr(ASTNode *node, IRProgram *prog) {
                 }
             }
             if (slot < 0) {
-                // Variable not found - create it as local
                 slot = prog->local_count++;
                 if (prog->local_count > prog->local_capacity) {
                     prog->local_capacity = prog->local_capacity ? prog->local_capacity * 2 : 16;
@@ -275,7 +263,7 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
     switch (node->type) {
         case AST_ASSIGN: {
             int val = ir_lower_expr(node->as.assign.value, prog);
-            // Use register-based storage: find or create local slot
+
             int slot = -1;
             for (int i = 0; i < prog->local_count; i++) {
                 if (strcmp(prog->local_names[i], node->as.assign.name) == 0) {
@@ -291,7 +279,7 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
                     prog->local_types = realloc(prog->local_types, prog->local_capacity * sizeof(IRType));
                 }
                 prog->local_names[slot] = qs_strdup(node->as.assign.name);
-                prog->local_types[slot] = IR_INT; // default to int
+                prog->local_types[slot] = IR_INT;
             }
             ir_emit(prog, IR_STORE_LOCAL, IR_INT, slot, val, 0);
             break;
@@ -299,13 +287,13 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
         case AST_PRINT: {
             for (int i = 0; i < node->as.print.argc; i++) {
                 int val = ir_lower_expr(node->as.print.args[i], prog);
-                // Determine type from register type tracking
+
                 IRType print_type = IR_INT;
                 if (val >= 0 && val < prog->reg_capacity) {
                     print_type = prog->reg_types[val];
                 }
                 ir_emit(prog, IR_PRINT_INT, print_type, 0, val, 0);
-                // Add space between multiple print arguments
+
                 if (i < node->as.print.argc - 1) {
                     int sp_reg = ir_alloc_reg(prog);
                     int sp_sidx = ir_add_string_const(prog, " ");
@@ -313,7 +301,7 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
                     ir_emit(prog, IR_PRINT_INT, IR_STRING, 0, sp_reg, 0);
                 }
             }
-            // Add newline after print (matches VM behavior)
+
             int nl_reg = ir_alloc_reg(prog);
             int nl_sidx = ir_add_string_const(prog, "\n");
             ir_emit(prog, IR_CONST_STRING, IR_STRING, nl_reg, nl_sidx, 0);
@@ -330,7 +318,6 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
         case AST_IF: {
             int cond = ir_lower_expr(node->as.if_stmt.cond, prog);
             if (node->as.if_stmt.else_body) {
-                // if-else: then_body, JMP end, else_label: else_body, end:
                 int else_label = ir_alloc_label(prog);
                 int end_label = ir_alloc_label(prog);
                 ir_emit(prog, IR_JMP_IF_FALSE, IR_BOOL, else_label, cond, 0);
@@ -340,7 +327,6 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
                 ir_lower_block(node->as.if_stmt.else_body, prog);
                 ir_emit(prog, IR_LABEL, IR_VOID, end_label, 0, 0);
             } else {
-                // if-only: then_body, else_label:
                 int else_label = ir_alloc_label(prog);
                 ir_emit(prog, IR_JMP_IF_FALSE, IR_BOOL, else_label, cond, 0);
                 ir_lower_block(node->as.if_stmt.then_body, prog);
@@ -361,7 +347,6 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
         }
         case AST_REPEAT: {
             if (node->as.repeat.is_counted) {
-                // repeat N { body } → for(i=0; i<N; i++) { body }
                 int count_val = ir_lower_expr(node->as.repeat.count_or_coll, prog);
                 int counter_slot = prog->local_count++;
                 if (prog->local_count > prog->local_capacity) {
@@ -369,37 +354,37 @@ static void ir_lower_stmt(ASTNode *node, IRProgram *prog) {
                     prog->local_names = realloc(prog->local_names, prog->local_capacity * sizeof(char*));
                     prog->local_types = realloc(prog->local_types, prog->local_capacity * sizeof(IRType));
                 }
-                // Generate unique counter name
+
                 static int repeat_counter_id = 0;
                 char counter_name[32];
                 snprintf(counter_name, sizeof(counter_name), "_i%d", repeat_counter_id++);
                 prog->local_names[counter_slot] = qs_strdup(counter_name);
                 prog->local_types[counter_slot] = IR_INT;
-                // Initialize counter to 0
+
                 int zero_reg = ir_alloc_reg(prog);
                 ir_emit(prog, IR_CONST_INT, IR_INT, zero_reg, 0, 0);
                 prog->instrs[prog->count - 1].ival = 0;
                 ir_emit(prog, IR_STORE_LOCAL, IR_INT, counter_slot, zero_reg, 0);
-                // Loop
+
                 int loop_label = ir_alloc_label(prog);
                 ir_emit(prog, IR_LABEL, IR_VOID, loop_label, 0, 0);
-                // Check counter < count
+
                 int load_reg = ir_alloc_reg(prog);
                 ir_emit(prog, IR_LOAD_LOCAL, IR_INT, load_reg, counter_slot, 0);
                 int cmp_reg = ir_alloc_reg(prog);
                 ir_emit(prog, IR_LT, IR_BOOL, cmp_reg, load_reg, count_val);
                 int exit_label = ir_alloc_label(prog);
                 ir_emit(prog, IR_JMP_IF_FALSE, IR_BOOL, exit_label, cmp_reg, 0);
-                // Body
+
                 ir_lower_block(node->as.repeat.body, prog);
-                // Increment counter
+
                 int one_reg = ir_alloc_reg(prog);
                 ir_emit(prog, IR_CONST_INT, IR_INT, one_reg, 0, 0);
                 prog->instrs[prog->count - 1].ival = 1;
                 int inc_reg = ir_alloc_reg(prog);
                 ir_emit(prog, IR_ADD, IR_INT, inc_reg, load_reg, one_reg);
                 ir_emit(prog, IR_STORE_LOCAL, IR_INT, counter_slot, inc_reg, 0);
-                // Jump back
+
                 ir_emit(prog, IR_JMP, IR_VOID, loop_label, 0, 0);
                 ir_emit(prog, IR_LABEL, IR_VOID, exit_label, 0, 0);
             } else {
@@ -435,9 +420,6 @@ static void ir_lower_block(ASTNode *block, IRProgram *prog) {
     }
 }
 
-// ---- IR Optimization Passes ----
-
-// Helper: check if instruction is a pure constant (has ival set, no side effects)
 static int ir_is_pure_const(IRProgram *prog, int reg) {
     for (int i = 0; i < prog->count; i++) {
         IRInstruction *ins = &prog->instrs[i];
@@ -448,7 +430,6 @@ static int ir_is_pure_const(IRProgram *prog, int reg) {
     return 0;
 }
 
-// Helper: get constant value from a register
 static long ir_get_const_val(IRProgram *prog, int reg) {
     for (int i = 0; i < prog->count; i++) {
         IRInstruction *ins = &prog->instrs[i];
@@ -459,7 +440,6 @@ static long ir_get_const_val(IRProgram *prog, int reg) {
     return 0;
 }
 
-// Helper: check if a register is only used once (for dead code elimination)
 static QS_UNUSED_FN int ir_reg_used_count(IRProgram *prog, int reg) {
     int count = 0;
     for (int i = 0; i < prog->count; i++) {
@@ -477,15 +457,13 @@ static QS_UNUSED_FN int ir_reg_used_count(IRProgram *prog, int reg) {
     return count;
 }
 
-// Pass 1: Constant Folding
-// Fold CONST op CONST → CONST at IR level
 static void ir_pass_constant_folding(IRProgram *prog) {
     int changed = 1;
     while (changed) {
         changed = 0;
         for (int i = 0; i < prog->count; i++) {
             IRInstruction *ins = &prog->instrs[i];
-            // Look for binary ops where both sources are constants
+
             if (ins->op == IR_ADD || ins->op == IR_SUB || ins->op == IR_MUL ||
                 ins->op == IR_DIV || ins->op == IR_MOD ||
                 ins->op == IR_EQ || ins->op == IR_NEQ ||
@@ -519,7 +497,7 @@ static void ir_pass_constant_folding(IRProgram *prog) {
                     changed = 1;
                 }
             }
-            // Fold NOT of constant
+
             if (ins->op == IR_NOT && ir_is_pure_const(prog, ins->src1)) {
                 long a = ir_get_const_val(prog, ins->src1);
                 ins->op = IR_CONST_BOOL;
@@ -527,7 +505,7 @@ static void ir_pass_constant_folding(IRProgram *prog) {
                 ins->src1 = 0;
                 changed = 1;
             }
-            // Fold NEG of constant
+
             if (ins->op == IR_NEG && ir_is_pure_const(prog, ins->src1)) {
                 long a = ir_get_const_val(prog, ins->src1);
                 ins->op = IR_CONST_INT;
@@ -539,23 +517,18 @@ static void ir_pass_constant_folding(IRProgram *prog) {
     }
 }
 
-// Pass 2: Copy Propagation + Dead Store Elimination
-// Track: reg = const → replace uses of reg with const
-// Track: reg = load_local → replace uses of reg with load_local
 static void ir_pass_copy_propagation(IRProgram *prog) {
-    // For each register, track if it holds a constant or a single load
     typedef struct { int is_const; long cval; int is_copy; int copy_reg; } RegInfo;
     RegInfo *info = calloc(prog->next_reg, sizeof(RegInfo));
 
     int changed = 1;
     while (changed) {
         changed = 0;
-        // Reset tracking
+
         for (int i = 0; i < prog->next_reg; i++) {
             info[i] = (RegInfo){0};
         }
 
-        // Forward scan: track what each register holds
         for (int i = 0; i < prog->count; i++) {
             IRInstruction *ins = &prog->instrs[i];
             switch (ins->op) {
@@ -574,44 +547,38 @@ static void ir_pass_copy_propagation(IRProgram *prog) {
                 case IR_EQ: case IR_NEQ: case IR_LT: case IR_GT:
                 case IR_LTE: case IR_GTE: case IR_AND: case IR_OR:
                 case IR_NEG: case IR_NOT:
-                    // Result is no longer a simple copy
+
                     info[ins->dst].is_const = 0;
                     info[ins->dst].is_copy = 0;
                     break;
                 case IR_STORE_LOCAL:
-                    // Storing to a local doesn't kill any register
+
                     break;
                 default:
                     break;
             }
         }
 
-        // Backward pass: replace uses of constant registers
         for (int i = 0; i < prog->count; i++) {
             IRInstruction *ins = &prog->instrs[i];
-            // Replace src1/src2 with constants
+
             if (ins->op != IR_CONST_INT && ins->op != IR_CONST_BOOL &&
                 ins->op != IR_CONST_FLOAT && ins->op != IR_CONST_STRING &&
                 ins->op != IR_LABEL && ins->op != IR_NOP &&
                 ins->op != IR_STORE_LOCAL && ins->op != IR_LOAD_LOCAL) {
                 if (ins->src1 >= 0 && ins->src1 < prog->next_reg && info[ins->src1].is_const) {
-                    // Can't directly replace src1 for binary ops that need registers
-                    // But for constants, emit a new const instruction before this one
-                    // Simpler approach: just fold constants in-place
                 }
             }
         }
 
-        // Simpler approach: eliminate dead stores (reg written but never read)
         for (int i = 0; i < prog->count; i++) {
             IRInstruction *ins = &prog->instrs[i];
-            // Only eliminate CONST_INT/CONST_BOOL that are overwritten or unused
+
             if (ins->op == IR_CONST_INT || ins->op == IR_CONST_BOOL) {
-                // Check if this reg is ever used as a source
                 int used = 0;
                 for (int j = i + 1; j < prog->count; j++) {
                     IRInstruction *later = &prog->instrs[j];
-                    // Only check src1/src2 for instructions that actually use them as registers
+
                     int uses_src1 = (later->op == IR_ADD || later->op == IR_SUB ||
                                      later->op == IR_MUL || later->op == IR_DIV ||
                                      later->op == IR_MOD || later->op == IR_EQ ||
@@ -652,7 +619,6 @@ static void ir_pass_copy_propagation(IRProgram *prog) {
     free(info);
 }
 
-// Pass 3: Peephole — eliminate NOP instructions
 static void ir_pass_nop_elimination(IRProgram *prog) {
     int write = 0;
     for (int read = 0; read < prog->count; read++) {
@@ -666,24 +632,20 @@ static void ir_pass_nop_elimination(IRProgram *prog) {
     prog->count = write;
 }
 
-// Main optimization pipeline
 static void ir_optimize(IRProgram *prog) {
     ir_pass_constant_folding(prog);
     ir_pass_copy_propagation(prog);
     ir_pass_nop_elimination(prog);
 }
 
-// ---- IR Verifier ----
-
 static int ir_verify(IRProgram *prog) {
     int errors = 0;
-    // Collect label targets for jump validation
+
     int *label_defined = NULL;
     if (prog->next_label > 0) {
         label_defined = calloc(prog->next_label, sizeof(int));
     }
 
-    // First pass: find all defined labels
     for (int i = 0; i < prog->count; i++) {
         IRInstruction *ins = &prog->instrs[i];
         if (ins->op == IR_LABEL) {
@@ -697,11 +659,9 @@ static int ir_verify(IRProgram *prog) {
         }
     }
 
-    // Second pass: validate instructions
     for (int i = 0; i < prog->count; i++) {
         IRInstruction *ins = &prog->instrs[i];
 
-        // Validate instruction index
         if (i < 0 || i >= prog->count) {
             fprintf(stderr, "[IR VERIFY] ERROR: instruction index %d out of range\n", i);
             errors++;
@@ -712,19 +672,18 @@ static int ir_verify(IRProgram *prog) {
             case IR_JMP:
             case IR_JMP_IF_FALSE:
             case IR_JMP_IF_TRUE: {
-                // Validate jump target
                 if (ins->dst < 0 || ins->dst >= prog->next_label) {
                     fprintf(stderr, "[IR VERIFY] ERROR [%d]: jump target L%d out of range [0, %d)\n",
                             i, ins->dst, prog->next_label);
                     errors++;
                 }
-                // Validate that target label exists
+
                 if (ins->dst >= 0 && ins->dst < prog->next_label && !label_defined[ins->dst]) {
                     fprintf(stderr, "[IR VERIFY] WARNING [%d]: jump to undefined label L%d\n",
                             i, ins->dst);
                     errors++;
                 }
-                // Validate source register for conditional jumps
+
                 if (ins->op != IR_JMP) {
                     if (ins->src1 < 0 || ins->src1 >= prog->next_reg) {
                         fprintf(stderr, "[IR VERIFY] ERROR [%d]: JMP source register r%d out of range [0, %d)\n",
@@ -826,8 +785,6 @@ static void ir_lower_program(ASTNode *ast, IRProgram *prog) {
     ir_emit(prog, IR_NOP, IR_VOID, 0, 0, 0);
 }
 
-// ---- IR → C Code Generation ----
-
 static void ir_dump(IRProgram *prog) {
     fprintf(stderr, "=== IR Dump ===\n");
     for (int i = 0; i < prog->count; i++) {
@@ -901,7 +858,6 @@ static int ir_emit_c(IRProgram *prog, const char *output_path) {
     fprintf(out, "#include <stdlib.h>\n");
     fprintf(out, "#include <string.h>\n\n");
 
-    // Emit string constants
     fprintf(out, "static const char* string_pool[] = {\n");
     for (int i = 0; i < prog->string_const_count; i++) {
         fprintf(out, "    ");
@@ -912,16 +868,13 @@ static int ir_emit_c(IRProgram *prog, const char *output_path) {
 
     fprintf(out, "int main(void) {\n");
 
-    // Emit local variable declarations
     for (int i = 0; i < prog->local_count; i++) {
         fprintf(out, "    long local_%s = 0;\n", prog->local_names[i]);
     }
 
-    // Emit register declarations
     fprintf(out, "    long r[%d];\n", prog->next_reg);
     fprintf(out, "    (void)r;\n");
 
-    // Emit instructions
     for (int i = 0; i < prog->count; i++) {
         IRInstruction *ins = &prog->instrs[i];
         switch (ins->op) {
@@ -935,15 +888,10 @@ static int ir_emit_c(IRProgram *prog, const char *output_path) {
                 fprintf(out, "    r[%d] = %ld;\n", ins->dst, ins->ival ? 1L : 0L);
                 break;
             case IR_CONST_STRING:
-                fprintf(out, "    r[%d] = %d; /* string_pool index */\n", ins->dst, ins->src1);
+                fprintf(out, "    r[%d] = %d;\n", ins->dst, ins->src1);
                 break;
             case IR_LOAD_GLOBAL:
-                fprintf(out, "    /* LOAD_GLOBAL %s -> r[%d] */\n",
-                        prog->string_consts[ins->src1], ins->dst);
-                break;
             case IR_STORE_GLOBAL:
-                fprintf(out, "    /* STORE_GLOBAL r[%d] -> %s */\n",
-                        ins->src1, prog->string_consts[ins->dst]);
                 break;
             case IR_LOAD_LOCAL:
                 fprintf(out, "    r[%d] = local_%s;\n", ins->dst, prog->local_names[ins->src1]);
@@ -1024,7 +972,6 @@ static int ir_emit_c(IRProgram *prog, const char *output_path) {
             case IR_NOP:
                 break;
             default:
-                fprintf(out, "    /* TODO: %d */\n", ins->op);
                 break;
         }
     }
@@ -1035,10 +982,7 @@ static int ir_emit_c(IRProgram *prog, const char *output_path) {
     return 1;
 }
 
-// ---- Native Compiler Entry Point ----
-
-static int native_compile(const char *input_path, const char *output_path) {
-    // Step 1: Parse source to AST
+static QS_UNUSED_FN int native_compile(const char *input_path, const char *output_path) {
     Program program = {0};
     if (!load_program_file(input_path, &program)) {
         fprintf(stderr, "Cannot read '%s'\n", input_path);
@@ -1055,12 +999,10 @@ static int native_compile(const char *input_path, const char *output_path) {
         return 1;
     }
 
-    // Step 2: Lower AST to IR
     IRProgram ir;
     ir_init(&ir);
     ir_lower_program(ast, &ir);
 
-    // Verify IR
     if (!ir_verify(&ir)) {
         fprintf(stderr, "IR verification failed, aborting code generation\n");
         ir_free(&ir);
@@ -1070,7 +1012,6 @@ static int native_compile(const char *input_path, const char *output_path) {
         return 1;
     }
 
-    // Step 2.5: Check for errors during IR lowering
     if (ir.has_error) {
         fprintf(stderr, "Native compilation error: %s\n", ir.error_msg);
         ir_free(&ir);
@@ -1080,10 +1021,8 @@ static int native_compile(const char *input_path, const char *output_path) {
         return 1;
     }
 
-    // Step 2.6: Optimization passes
     ir_optimize(&ir);
 
-    // Re-verify after optimization
     if (!ir_verify(&ir)) {
         fprintf(stderr, "IR verification failed after optimization, aborting code generation\n");
         ir_free(&ir);
@@ -1093,19 +1032,16 @@ static int native_compile(const char *input_path, const char *output_path) {
         return 1;
     }
 
-    // Optional: dump IR
     if (g_dump_bytecode) {
         ir_dump(&ir);
     }
 
-    // Step 3: Generate C code
     int ok = ir_emit_c(&ir, output_path);
 
-    // Cleanup
     ir_free(&ir);
     ast_free(ast);
     free_program(&program);
-    // g_program points to stack-allocated program, do NOT free it
+
     g_program = NULL;
 
     return ok ? 0 : 1;

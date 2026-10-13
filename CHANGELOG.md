@@ -2,6 +2,36 @@
 
 All notable changes to QuantoScript will be documented in this file.
 
+## [1.1.0] — 2026-10-13
+
+### Highlights
+- Unified function-variable scoping between the tree-walk interpreter and the bytecode VM. Functions defined in the main program now read and write the global environment directly (mirroring the VM's compiled `OP_STORE_VAR` path), while imported/module functions keep private frames.
+- Centralized the product version into a single `QS_VERSION` definition consumed by the CLI, project template, and HTTP user agent.
+
+### Features
+- Added the `morph(value, type)` builtin for converting values between types (`int`, `float`, `string`, `bool`, `list`, `map`). Type names may be written bare (`morph("5", int)`) or as strings (`morph("5", "int")`), aliases (`integer`, `number`, `str`, `dict`, ...) are accepted, and the bare type names now work as values with `isinstance`.
+- Added the `stdlib/url.qs` module with `url_encode` and `url_decode` for percent-encoding query values.
+- Added `sleep(milliseconds)` to `stdlib/time.qs` (backed by the new `sys_sleep` builtin) for pacing loops such as polling bots.
+
+### Bug Fixes
+- Interpreter/VM scope parity: non-parameter assignments in main-program functions now write through to the global environment; parameters and imported-function locals stay private.
+- Fixed a garbage (uninitialized) block in class-method collection that could crash class parsing.
+- `sys_*` builtins now report `'<name>' requires native mode` instead of silently failing when used without native mode.
+- Fixed f-strings with trailing literal text after the final interpolation.
+- Fixed VM handling of single-line `if`/`else` bodies (`ast_parse_block_body`).
+- `try`/`oops` now behave identically on all three execution paths for every layout: fully single-line (`try { A } oops e { B }`), inline try with a multi-line oops block, and multi-line try with an inline oops block.
+- JSON parsing now decodes `\uXXXX` escapes (including UTF-16 surrogate pairs) into real UTF-8 characters instead of leaving the literal `uXXXX` text.
+- Fixed a use-after-free when running a `.qvm` image (`run_qvm_file`).
+- HTTP requests now percent-encode characters that are invalid in a URL (spaces, non-ASCII bytes, backslashes) instead of sending a malformed request line, which previously caused servers to reply `400 Bad Request`.
+- HTTP responses now report the real transport error code in the `error` key when a request fails (previously it was always `0`), making timeouts and TLS failures diagnosable.
+- `qs compile` now finds the C runtime sources (`quanto.c` and `src/parts/`) relative to the installed binary, `QUANTO_HOME`, a `QS_SOURCE_DIR` environment variable, and the current directory tree (previously it only searched the working directory), and reports a clear error when they are missing. Release archives and the installer now ship the `src/` runtime so `qs compile` works from a normal installation. The generated build no longer prints the runtime's C compiler warnings, and the underlying unused-parameter/variable and format-truncation warnings were fixed. It also no longer creates an empty `build/` directory or leaves the intermediate generated `.c` file behind (the `.c` is kept only when the build fails, for debugging).
+- On Windows, non-ASCII output (for example Persian or other UTF-8 text) now prints correctly: the CLI switches the console to the UTF-8 code page on startup and restores the previous one on exit.
+
+### Tooling
+- Regression runner now normalizes nondeterministic wall-clock values (uptime, timestamps) before comparing outputs across paths.
+- Version is now a single source of truth (`QS_VERSION`), overridable at build time via `make VERSION=x.y.z`.
+- Removed leftover audit/validation scratch scripts so the repository ships only the maintained test suite.
+
 ## [1.0.0] — 2026-07-11
 
 ### Highlights
@@ -38,11 +68,9 @@ First stable release of QuantoScript. A small, readable scripting language with 
 ### Infrastructure
 - Added automated regression test runner (132 tests, 396 executions)
 - GitHub Actions CI with Windows/macOS/Linux support
-- Release audit completed (96/100 score)
 
 ### Documentation
 - Complete API documentation (DOCS.md)
-- Release audit report (docs/V1_RELEASE_REPORT.md)
 - CI status badge added to README
 
 ### Known Limitations
@@ -116,4 +144,4 @@ First stable release of QuantoScript. A small, readable scripting language with 
 - Tree-walk parser does not support single-line try/oops syntax
 - Built-in argument count validated at parse time (interpreter) vs runtime (VM)
 - Some string methods (upper, lower, etc.) available only via the VM's dispatch_method
-- **Async/await is broken** — `run_all()` hangs with 2+ tasks, non-deterministic crashes under load. The task queue (`stdlib/async.qs`) is not functional for production use. Individual `spawn()`/`run()`/`result()` work for single tasks. See `ASYNC_VALIDATION.md` for full audit.
+- **Async/await is broken** — `run_all()` hangs with 2+ tasks, non-deterministic crashes under load. The task queue (`stdlib/async.qs`) is not functional for production use. Individual `spawn()`/`run()`/`result()` work for single tasks.

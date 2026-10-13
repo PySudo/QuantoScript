@@ -1,6 +1,4 @@
-/* QuantoScript amalgamation. Edit files under src/parts, not this file directly. */
 #include "parts/platform.inc"
-#include "parts/audit.inc"
 #include "parts/types.inc"
 #include "parts/common.inc"
 #include "parts/values.inc"

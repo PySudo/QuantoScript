@@ -11,10 +11,10 @@
         irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1 | iex
 
     Or with options:
-        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.0.0
+        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.1.0
 
 .PARAMETER Version
-    Version to install (e.g. 1.0.0). Defaults to the latest release.
+    Version to install (e.g. 1.1.0). Defaults to the latest release.
 
 .PARAMETER InstallDir
     Install prefix. Defaults to $env:USERPROFILE\.quanto
@@ -141,12 +141,12 @@ function Invoke-Install {
         $srcBin = Join-Path $pkgdir.FullName "bin\$BinName"
         if (-not (Test-Path $srcBin)) { Fail "binary not found in archive" }
 
-        # Layout: InstallDir\bin\qs.exe  and  InstallDir\share\quantoscript\{stdlib,examples}
+        # Layout: InstallDir\bin\qs.exe  and  InstallDir\share\quantoscript\{stdlib,examples,src}
         $binDir  = Join-Path $InstallDir "bin"
         $dataDir = Join-Path $InstallDir $DataSubdir
         New-Item -ItemType Directory -Force -Path $binDir, $dataDir | Out-Null
         Copy-Item $srcBin (Join-Path $binDir $BinName) -Force
-        foreach ($sub in "stdlib", "examples") {
+        foreach ($sub in "stdlib", "examples", "src") {
             $s = Join-Path $pkgdir.FullName $sub
             $d = Join-Path $dataDir $sub
             if (Test-Path $d) { Remove-Item -Recurse -Force $d }

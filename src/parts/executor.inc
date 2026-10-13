@@ -1,15 +1,24 @@
+static int line_is_free_text_comment(const char *line) {
+    size_t p = 0;
+    while (line[p] == ' ' || line[p] == '\t') p++;
+    if (!is_name_start(line[p])) return 0;
+    while (is_name_part(line[p])) p++;
+    if (line[p] != ' ' && line[p] != '\t') return 0;
+    while (line[p] == ' ' || line[p] == '\t') p++;
+    return is_name_start(line[p]);
+}
+
 static int execute_assignment(Environment *env, const char *line_text, size_t assignment_pos, char assign_op, int line, ParseError *err) {
     char *name = trim_copy(line_text, assignment_pos);
     if (!validate_variable_name(name, line, err)) {
-        // Check if it's a field assignment: obj.field = value
         char *dot = strchr(name, '.');
         if (dot && assign_op == '=') {
-            // Field assignment: obj.field = value
             size_t obj_len = dot - name;
             char *obj_name = qs_strndup(name, obj_len);
             char *field_name = dot + 1;
 
-            int obj_idx = find_variable(env, obj_name);
+            Environment *obj_env = env;
+            int obj_idx = find_variable_scoped(env, obj_name, &obj_env);
             if (obj_idx < 0) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "unknown variable '%s'", obj_name);
@@ -19,7 +28,7 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
                 return 0;
             }
 
-            Value obj = env->items[obj_idx].value;
+            Value obj = obj_env->items[obj_idx].value;
             if (obj.type != VALUE_OBJECT) {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "'%s' is not an object", obj_name);
@@ -29,7 +38,6 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
                 return 0;
             }
 
-            // Evaluate the value expression
             Value value;
             size_t rhs_offset = assign_op == '=' ? 1 : 2;
             if (!eval_expression_text(env, line_text + assignment_pos + rhs_offset, strlen(line_text + assignment_pos + rhs_offset), line, &value, err)) {
@@ -38,7 +46,6 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
                 return 0;
             }
 
-            // Set the field
             int found = 0;
             for (size_t i = 0; i < obj.as.object.data->fields.count; i++) {
                 if (strcmp(obj.as.object.data->fields.items[i].key, field_name) == 0) {
@@ -49,7 +56,6 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
                 }
             }
             if (!found) {
-                // Add new field
                 if (obj.as.object.data->fields.count == obj.as.object.data->fields.capacity) {
                     size_t next_cap = obj.as.object.data->fields.capacity ? obj.as.object.data->fields.capacity * 2 : 8;
                     DictEntry *next = realloc(obj.as.object.data->fields.items, next_cap * sizeof(DictEntry));
@@ -81,7 +87,8 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
             if (!eval_expression_text(env, key_expr, strlen(key_expr), line, &key_val, err)) {
                 free(obj_name); free(name); return 0;
             }
-            int obj_idx = find_variable(env, obj_name);
+            Environment *dict_env = env;
+            int obj_idx = find_variable_scoped(env, obj_name, &dict_env);
             if (obj_idx < 0) {
                 char msg[256]; snprintf(msg, sizeof(msg), "unknown variable '%s'", obj_name);
                 set_error(err, line, 1, msg); free_value(key_val); free(obj_name); free(name); return 0;
@@ -90,15 +97,15 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
             if (!eval_expression_text(env, line_text + assignment_pos + 1, strlen(line_text + assignment_pos + 1), line, &value, err)) {
                 free_value(key_val); free(obj_name); free(name); return 0;
             }
-            if (env->items[obj_idx].value.type == VALUE_DICT) {
-                Value new_val = clone_value(env->items[obj_idx].value);
+            if (dict_env->items[obj_idx].value.type == VALUE_DICT) {
+                Value new_val = clone_value(dict_env->items[obj_idx].value);
                 char *k = value_to_string(key_val);
                 dict_set(&new_val.as.dict, k, clone_value(value));
-                free(k); free_value(env->items[obj_idx].value); env->items[obj_idx].value = new_val;
+                free(k); free_value(dict_env->items[obj_idx].value); dict_env->items[obj_idx].value = new_val;
                 free_value(key_val); free_value(value); free(obj_name); free(name); return 1;
             } else {
-                free_value(key_val); free_value(value); free(obj_name); free(name);
                 char msg[256]; snprintf(msg, sizeof(msg), "'%s' is not a map", obj_name);
+                free_value(key_val); free_value(value); free(obj_name); free(name);
                 set_error(err, line, 1, msg); return 0;
             }
         }
@@ -123,6 +130,10 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
 
     if (assign_op != '=') {
         int index = find_variable(env, name);
+        if (index < 0 && env != g_root_env && g_root_env &&
+            g_current_function && !g_current_function->is_module) {
+            index = find_variable(g_root_env, name);
+        }
         if (index < 0) {
             char msg[256];
             snprintf(msg, sizeof(msg), "unknown variable '%s'", name);
@@ -147,7 +158,27 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
         free(expression);
     }
 
-    env_set(env, name, value);
+    int propagate_global = 0;
+    if (env != g_root_env && g_root_env &&
+        g_current_function && !g_current_function->is_module) {
+        int is_param = 0;
+        for (size_t p = 0; p < g_current_function->param_count; p++) {
+            if (g_current_function->params[p].name &&
+                strcmp(g_current_function->params[p].name, name) == 0) {
+                is_param = 1;
+                break;
+            }
+        }
+        if (!is_param) {
+            propagate_global = 1;
+        }
+    }
+
+    if (propagate_global) {
+        env_set(g_root_env, name, value);
+    } else {
+        env_set(env, name, value);
+    }
     free(name);
     return 1;
 }
@@ -163,7 +194,13 @@ static int execute_method_statement(Environment *env, const char *line_text, int
         return 0;
     }
 
+    Environment *method_env = env;
     int index = find_variable(env, name);
+    if (index < 0 && env != g_root_env && g_root_env &&
+        g_current_function && !g_current_function->is_module) {
+        index = find_variable(g_root_env, name);
+        if (index >= 0) method_env = g_root_env;
+    }
     if (index < 0) {
         char msg[256];
         snprintf(msg, sizeof(msg), "unknown variable '%s'", name);
@@ -172,7 +209,7 @@ static int execute_method_statement(Environment *env, const char *line_text, int
         return 0;
     }
 
-    if (is_define_name(name) && find_variable(env, name) >= 0) {
+    if (is_define_name(name) && find_variable(method_env, name) >= 0) {
         char msg[256];
         snprintf(msg, sizeof(msg), "definition '%s' already exists and cannot be changed", name);
         set_error(err, line, 1, msg);
@@ -203,14 +240,13 @@ static int execute_method_statement(Environment *env, const char *line_text, int
         return 0;
     }
 
-    Value value = clone_value(env->items[index].value);
+    Value value = clone_value(method_env->items[index].value);
     int ok = apply_method(&parser, &value, method, &args);
     for (size_t i = 0; i < args.count; i++) {
         free_value(args.items[i]);
     }
     free(args.items);
 
-    // For mutation methods, write back the modified value to the variable
     int is_mutation = (strcmp(method, "extend") == 0 || strcmp(method, "append") == 0 ||
          strcmp(method, "sort") == 0 || strcmp(method, "remove") == 0 ||
          strcmp(method, "insert") == 0 || strcmp(method, "pop") == 0 ||
@@ -226,8 +262,8 @@ static int execute_method_statement(Environment *env, const char *line_text, int
     }
 
     if (is_mutation) {
-        free_value(env->items[index].value);
-        env->items[index].value = value;
+        free_value(method_env->items[index].value);
+        method_env->items[index].value = value;
     } else {
         free_value(value);
     }
@@ -322,7 +358,6 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
 
     int single_line_body = 0;
     if (!rest_is_space_or_comment(line_text, brace_pos + 1)) {
-        // Content after { on the same line GÇö single-line loop body
         single_line_body = 1;
     }
 
@@ -331,7 +366,6 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
         return 0;
     }
 
-    // For single-line loops (body on same line as {), create a temp program
     Program single_prog = {0};
     int using_single_prog = 0;
     size_t orig_index = *index;
@@ -339,7 +373,6 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
     size_t loop_body_start = *index + 1;
     size_t loop_body_end = close_line;
     if (single_line_body) {
-        // Extract body text between matching { and } (depth-tracked for nested blocks)
         size_t body_start = brace_pos + 1;
         size_t body_end = body_start;
         int depth = 1;
@@ -353,7 +386,6 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
         memcpy(body_copy, line_text + body_start, body_len);
         body_copy[body_len] = '\0';
 
-        // Split body into individual statements using shared splitter
         single_prog.path = qs_strdup("<loop_body>");
         single_prog.dir = qs_strdup(".");
         split_text_to_program(body_copy, &single_prog);
@@ -595,7 +627,6 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
     }
 
     if (using_single_prog) {
-        // Free the temp program manually (free_program is defined later in the amalgamation)
         for (size_t fi = 0; fi < single_prog.count; fi++) {
             free(single_prog.items[fi]);
         }
@@ -604,11 +635,44 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
         free(single_prog.dir);
         *index = orig_index;
         program = orig_program;
-        return 2;  // Signal: single-line body, caller should re-parse same line
+        return 2;
     } else {
         *index = close_line;
     }
     return 1;
+}
+
+static int execute_inline_block(Environment *env, const char *line_text, size_t brace_pos, int line_no, ParseError *err) {
+    size_t body_start = brace_pos + 1;
+    size_t body_end = body_start;
+    size_t len = strlen(line_text);
+    int depth = 1;
+    while (body_end < len && depth > 0) {
+        if (line_text[body_end] == '{') depth++;
+        else if (line_text[body_end] == '}') { depth--; if (depth == 0) break; }
+        body_end++;
+    }
+    size_t body_len = body_end - body_start;
+    char *body_copy = malloc(body_len + 1);
+    memcpy(body_copy, line_text + body_start, body_len);
+    body_copy[body_len] = '\0';
+
+    Program body_prog = {0};
+    body_prog.path = qs_strdup("<inline_block>");
+    body_prog.dir = qs_strdup(".");
+    split_text_to_program(body_copy, &body_prog);
+    free(body_copy);
+    (void)line_no;
+
+    int ok = execute_range(&body_prog, env, 0, body_prog.count, err);
+
+    for (size_t fi = 0; fi < body_prog.count; fi++) {
+        free(body_prog.items[fi]);
+    }
+    free(body_prog.items);
+    free(body_prog.path);
+    free(body_prog.dir);
+    return ok;
 }
 
 static int execute_if(Program *program, Environment *env, size_t *index, size_t end, ParseError *err) {
@@ -621,10 +685,7 @@ static int execute_if(Program *program, Environment *env, size_t *index, size_t 
         set_error(err, (int)*index + 1, 1, "if needs '{' on the same line");
         return 0;
     }
-    if (!rest_is_space_or_comment(line_text, brace_pos + 1)) {
-        set_error(err, (int)*index + 1, (int)brace_pos + 2, "nothing can appear after '{'");
-        return 0;
-    }
+    int inline_body = !rest_is_space_or_comment(line_text, brace_pos + 1);
 
     size_t if_close = 0;
     if (!find_block_end(program, *index, end, &if_close, err)) {
@@ -639,7 +700,11 @@ static int execute_if(Program *program, Environment *env, size_t *index, size_t 
     free_value(condition);
 
     if (is_true) {
-        if (!execute_range(program, env, *index + 1, if_close, err)) {
+        if (inline_body) {
+            if (!execute_inline_block(env, line_text, brace_pos, (int)*index + 1, err)) {
+                return 0;
+            }
+        } else if (!execute_range(program, env, *index + 1, if_close, err)) {
             return 0;
         }
         if (g_has_return) {
@@ -685,10 +750,7 @@ static int execute_if(Program *program, Environment *env, size_t *index, size_t 
             set_error(err, (int)branch_line + 1, 1, is_maybe ? "maybe needs '{' on the same line" : "else needs '{' on the same line");
             return 0;
         }
-        if (!rest_is_space_or_comment(program->items[branch_line], branch_brace + 1)) {
-            set_error(err, (int)branch_line + 1, (int)branch_brace + 2, "nothing can appear after '{'");
-            return 0;
-        }
+        int branch_inline = !rest_is_space_or_comment(program->items[branch_line], branch_brace + 1);
 
         size_t branch_close = 0;
         if (!find_block_end(program, branch_line, end, &branch_close, err)) {
@@ -703,7 +765,11 @@ static int execute_if(Program *program, Environment *env, size_t *index, size_t 
             int maybe_true = value_truthy(maybe_condition);
             free_value(maybe_condition);
             if (maybe_true) {
-                if (!execute_range(program, env, branch_line + 1, branch_close, err)) {
+                if (branch_inline) {
+                    if (!execute_inline_block(env, program->items[branch_line], branch_brace, (int)branch_line + 1, err)) {
+                        return 0;
+                    }
+                } else if (!execute_range(program, env, branch_line + 1, branch_close, err)) {
                     return 0;
                 }
                 if (g_has_return) {
@@ -713,7 +779,11 @@ static int execute_if(Program *program, Environment *env, size_t *index, size_t 
             }
         } else if (is_else) {
             if (!branch_ran) {
-                if (!execute_range(program, env, branch_line + 1, branch_close, err)) {
+                if (branch_inline) {
+                    if (!execute_inline_block(env, program->items[branch_line], branch_brace, (int)branch_line + 1, err)) {
+                        return 0;
+                    }
+                } else if (!execute_range(program, env, branch_line + 1, branch_close, err)) {
                     return 0;
                 }
                 if (g_has_return) {
@@ -733,6 +803,24 @@ static int execute_if(Program *program, Environment *env, size_t *index, size_t 
     return 1;
 }
 
+static int find_block_end_at_brace(Program *program, size_t open_line, size_t brace_pos, size_t end, size_t *close_line, ParseError *err) {
+    int depth = 0;
+    for (size_t i = open_line; i < end; i++) {
+        const char *line = program->items[i];
+        size_t start = (i == open_line) ? brace_pos : 0;
+        size_t len = strlen(line);
+        for (size_t j = start; j < len; j++) {
+            if (line[j] == '{') depth++;
+            else if (line[j] == '}') {
+                depth--;
+                if (depth == 0) { *close_line = i; return 1; }
+            }
+        }
+    }
+    set_error(err, (int)open_line + 1, 1, "try/oops block is missing '}'");
+    return 0;
+}
+
 static int execute_try(Program *program, Environment *env, size_t *index, size_t end, ParseError *err) {
     const char *line_text = program->items[*index];
     size_t after_word = 0;
@@ -743,10 +831,7 @@ static int execute_try(Program *program, Environment *env, size_t *index, size_t
         set_error(err, (int)*index + 1, 1, "try needs '{' on the same line");
         return 0;
     }
-    if (!rest_is_space_or_comment(line_text, brace_pos + 1)) {
-        set_error(err, (int)*index + 1, (int)brace_pos + 2, "nothing can appear after '{'");
-        return 0;
-    }
+    int try_inline = !rest_is_space_or_comment(line_text, brace_pos + 1);
 
     size_t try_close = 0;
     if (!find_block_end(program, *index, end, &try_close, err)) {
@@ -758,26 +843,53 @@ static int execute_try(Program *program, Environment *env, size_t *index, size_t
     size_t oops_brace = 0;
     char *error_var_name = NULL;
 
-    if (line_is_close_word(program->items[try_close], "oops", &oops_after)) {
-        oops_line = try_close;
-        oops_after += strlen("oops");
-    } else {
-        while (oops_line < end && line_is_empty_or_comment(program->items[oops_line])) {
-            oops_line++;
+    int oops_found = 0;
+    if (try_close == *index) {
+        size_t depth = 0;
+        size_t close_pos = brace_pos;
+        size_t p = brace_pos + 1;
+        for (size_t j = brace_pos; line_text[j]; j++) {
+            if (line_text[j] == '{') {
+                depth++;
+            } else if (line_text[j] == '}') {
+                depth--;
+                if (depth == 0) {
+                    close_pos = j;
+                    p = j + 1;
+                    break;
+                }
+            }
         }
-        if (oops_line >= end || !line_starts_with(program->items[oops_line], "oops", &oops_after)) {
-            set_error(err, (int)*index + 1, 1, "try needs oops");
-            return 0;
+        while (line_text[p] && isspace((unsigned char)line_text[p])) p++;
+        if (strncmp(line_text + p, "oops", 4) == 0 && !is_name_part(line_text[p + 4])) {
+            oops_line = *index;
+            oops_after = p + strlen("oops");
+            oops_found = 1;
+        }
+        (void)close_pos;
+    }
+
+    if (!oops_found) {
+        if (line_is_close_word(program->items[try_close], "oops", &oops_after)) {
+            oops_line = try_close;
+            oops_after += strlen("oops");
+        } else {
+            while (oops_line < end && line_is_empty_or_comment(program->items[oops_line])) {
+                oops_line++;
+            }
+            if (oops_line >= end || !line_starts_with(program->items[oops_line], "oops", &oops_after)) {
+                set_error(err, (int)*index + 1, 1, "try needs oops");
+                return 0;
+            }
         }
     }
 
-    // Check for optional error variable name after "oops"
     {
         const char *oops_text = program->items[oops_line];
         size_t pos = oops_after;
-        // Skip spaces
+
         while (oops_text[pos] && isspace((unsigned char)oops_text[pos])) pos++;
-        // Check if there's a name before '{'
+
         if (is_name_start(oops_text[pos]) && oops_text[pos] != '{') {
             size_t name_start = pos;
             while (is_name_part(oops_text[pos])) pos++;
@@ -791,31 +903,41 @@ static int execute_try(Program *program, Environment *env, size_t *index, size_t
         free(error_var_name);
         return 0;
     }
-    if (!rest_is_space_or_comment(program->items[oops_line], oops_brace + 1)) {
-        set_error(err, (int)oops_line + 1, (int)oops_brace + 2, "nothing can appear after '{'");
-        free(error_var_name);
-        return 0;
-    }
-
     size_t oops_close = 0;
-    if (!find_block_end(program, oops_line, end, &oops_close, err)) {
+    if (!find_block_end_at_brace(program, oops_line, oops_brace, end, &oops_close, err)) {
         free(error_var_name);
         return 0;
     }
 
     ParseError try_err = {0};
-    if (!execute_range(program, env, *index + 1, try_close, &try_err)) {
-        // Error occurred GÇö bind error variable if name was given
+    int try_ok;
+    if (try_inline) {
+        try_ok = execute_inline_block(env, line_text, brace_pos, (int)*index + 1, &try_err);
+    } else {
+        try_ok = execute_range(program, env, *index + 1, try_close, &try_err);
+    }
+    if (!try_ok) {
         if (error_var_name) {
             env_set(env, error_var_name, make_string_owned(qs_strdup(try_err.message)));
         }
         ParseError oops_err = {0};
-        if (!execute_range(program, env, oops_line + 1, oops_close, &oops_err)) {
+        int oops_ok = 1;
+        if (oops_close == oops_line) {
+            oops_ok = execute_inline_block(env, program->items[oops_line], oops_brace, (int)oops_line + 1, &oops_err);
+        } else {
+            if (!rest_is_space_or_comment(program->items[oops_line], oops_brace + 1)) {
+                oops_ok = execute_inline_block(env, program->items[oops_line], oops_brace, (int)oops_line + 1, &oops_err);
+            }
+            if (oops_ok) {
+                oops_ok = execute_range(program, env, oops_line + 1, oops_close, &oops_err);
+            }
+        }
+        if (!oops_ok) {
             *err = oops_err;
             free(error_var_name);
             return 0;
         }
-        // Remove error variable from scope after oops block
+
         if (error_var_name) {
             int idx = find_variable(env, error_var_name);
             if (idx >= 0) {
@@ -836,7 +958,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
     int skip_increment = 0;
     for (size_t i = start; i < end; i++) {
         if (!skip_increment) {
-            // Normal iteration
         } else {
             skip_increment = 0;
         }
@@ -864,10 +985,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
             continue;
         }
         if (line_starts_with(line_text, "class", &after_word)) {
-            // Parse class definition: class Name { methods... }
-            // The file loader merges multi-line constructs into single logical lines.
-            // So the entire class definition is on one line.
-            // Extract class name
             size_t name_start = after_word;
             while (line_text[name_start] == ' ' || line_text[name_start] == '\t') name_start++;
             size_t name_end = name_start;
@@ -881,16 +998,13 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 return 0;
             }
 
-            // Store class name as a CLASS value in the environment
             Value class_val = make_class(class_name);
             env_set(env, class_name, class_val);
 
-            // Find the opening { of the class body
             size_t body_start = name_end;
             while (line_text[body_start] && line_text[body_start] != '{') body_start++;
-            body_start++; // skip {
+            body_start++;
 
-            // Find the matching } of the class body
             size_t body_end = body_start;
             int depth = 1;
             while (line_text[body_end] && depth > 0) {
@@ -898,16 +1012,12 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 else if (line_text[body_end] == '}') depth--;
                 if (depth > 0) body_end++;
             }
-            // body_end now points to the closing }
 
-            // Parse methods from the class body text
             size_t pos = body_start;
             while (pos < body_end) {
-                // Skip whitespace and newlines
                 while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t' || line_text[pos] == '\n' || line_text[pos] == '\r')) pos++;
                 if (pos >= body_end) break;
 
-                // Check for func/fn keyword, or direct method definition
                 int found_method = 0;
                 if (strncmp(line_text + pos, "func", 4) == 0 && !is_name_part(line_text[pos + 4])) {
                     pos += 4;
@@ -916,7 +1026,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                     pos += 2;
                     found_method = 1;
                 } else if (is_name_start(line_text[pos])) {
-                    // Check if this looks like a method definition: name(
                     size_t check = pos;
                     while (check < body_end && is_name_part(line_text[check])) check++;
                     if (check < body_end && line_text[check] == '(') {
@@ -925,22 +1034,17 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 }
 
                 if (!found_method) {
-                    // Skip to next method (find next '}' that closes a method body)
-                    // This is a field declaration or other content - skip it
                     pos++;
                     continue;
                 }
 
-                // Skip whitespace after func/fn
                 while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
 
-                // Parse method name
                 size_t mname_start = pos;
                 while (pos < body_end && is_name_part(line_text[pos])) pos++;
                 size_t mname_len = pos - mname_start;
                 char *method_name = qs_strndup(line_text + mname_start, mname_len);
 
-                // Build qualified name: ClassName.method_name
                 size_t qname_len = name_len + 1 + mname_len + 1;
                 char *qname = malloc(qname_len);
                 snprintf(qname, qname_len, "%s.%s", class_name, method_name);
@@ -948,37 +1052,30 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 Function function = {0};
                 function.name = qname;
 
-                // Add 'self' as first parameter
                 Param self_param = {0};
                 self_param.name = qs_strdup("self");
                 self_param.type = qs_strdup("any");
                 param_push(&function, self_param);
 
-                // Skip whitespace before (
                 while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
 
-                // Parse params
                 if (pos < body_end && line_text[pos] == '(') {
-                    pos++; // skip (
+                    pos++;
                     while (pos < body_end && line_text[pos] != ')') {
-                        // Skip whitespace
                         while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
                         if (pos >= body_end || line_text[pos] == ')') break;
 
-                        // Parse param name
                         size_t pname_start = pos;
                         while (pos < body_end && is_name_part(line_text[pos])) pos++;
                         size_t pname_len = pos - pname_start;
                         char *pname = qs_strndup(line_text + pname_start, pname_len);
 
-                        // Skip whitespace
                         while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
 
-                        // Optional type annotation
                         Param param = {0};
                         param.name = pname;
                         if (pos < body_end && line_text[pos] == ':') {
-                            pos++; // skip :
+                            pos++;
                             while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
                             size_t tname_start = pos;
                             while (pos < body_end && is_name_part(line_text[pos])) pos++;
@@ -989,7 +1086,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
 
                         param_push(&function, param);
 
-                        // Skip whitespace
                         while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
                         if (pos < body_end && line_text[pos] == ',') {
                             pos++;
@@ -997,26 +1093,22 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                         }
                         break;
                     }
-                    // Skip past )
+
                     if (pos < body_end && line_text[pos] == ')') pos++;
                 }
 
-                // Skip whitespace
                 while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
 
-                // Skip optional return type: -> type
                 if (pos < body_end && line_text[pos] == '-' && pos + 1 < body_end && line_text[pos + 1] == '>') {
                     pos += 2;
                     while (pos < body_end && line_text[pos] != '{') pos++;
                 }
 
-                // Find method body { ... }
                 if (pos >= body_end || line_text[pos] != '{') {
                     free(method_name);
                     continue;
                 }
 
-                // Find matching }
                 int mdepth = 1;
                 size_t mbody_start = pos + 1;
                 size_t mbody_end = mbody_start;
@@ -1025,20 +1117,16 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                     else if (line_text[mbody_end] == '}') mdepth--;
                     if (mdepth > 0) mbody_end++;
                 }
-                // mbody_end now points to the closing }
 
-                // Store method: body is from mbody_start to mbody_end
                 size_t body_len = mbody_end - mbody_start;
                 char *body_raw = malloc(body_len + 1);
                 memcpy(body_raw, line_text + mbody_start, body_len);
                 body_raw[body_len] = '\0';
 
-                // Create a temporary program for the method body
                 Program *method_prog = calloc(1, sizeof(Program));
                 method_prog->path = qs_strdup("<class_method>");
                 method_prog->dir = qs_strdup(".");
 
-                // Split merged method body into individual statement lines.
                 split_text_to_program(body_raw, method_prog);
                 if (method_prog->count == 0) {
                     program_push(method_prog, qs_strdup(""));
@@ -1052,7 +1140,7 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 function_push(function);
 
                 free(method_name);
-                pos = mbody_end + 1; // skip past closing }
+                pos = mbody_end + 1;
             }
 
             free(class_name);
@@ -1112,11 +1200,9 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
             continue;
         }
         if (line_starts_with(line_text, "oops", &after_word)) {
-            // Check if this is oops("msg") throw expression
             size_t check = after_word;
             while (line_text[check] && isspace((unsigned char)line_text[check])) check++;
             if (line_text[check] == '(') {
-                // oops("message") GÇö evaluate argument and throw
                 Value msg = make_null();
                 ParseError expr_err = {0};
                 const char *expr_start = line_text + after_word;
@@ -1151,7 +1237,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 return 1;
             }
             if (loop_result == 2) {
-                // Single-line body: re-parse rest of same line (don't skip)
                 skip_increment = 1;
             }
             continue;
@@ -1165,7 +1250,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
                 return 1;
             }
             if (loop_result == 2) {
-                // Single-line body: re-parse rest of same line (don't skip)
                 skip_increment = 1;
             }
             continue;
@@ -1208,6 +1292,24 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
             }
         }
 
+        if (line_is_free_text_comment(line_text)) {
+            continue;
+        }
+
+        {
+            const char *word = line_text + pos;
+            size_t wl = 0;
+            while (is_name_part(word[wl])) wl++;
+            char msg[256];
+            if (wl > 0 && is_name_start(word[0])) {
+                size_t copy = wl < sizeof(msg) - 32 ? wl : sizeof(msg) - 32;
+                snprintf(msg, sizeof(msg), "unknown variable '%.*s'", (int)copy, word);
+            } else {
+                snprintf(msg, sizeof(msg), "unexpected statement");
+            }
+            set_error(err, (int)i + 1, (int)pos + 1, msg);
+            return 0;
+        }
     }
     return 1;
 }

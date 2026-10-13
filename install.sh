@@ -5,7 +5,7 @@
 #
 # Environment variables:
 #   QUANTO_INSTALL   install prefix              (default: $HOME/.quanto)
-#   QS_VERSION       version to install, e.g. 1.0.0  (default: latest release)
+#   QS_VERSION       version to install, e.g. 1.1.0  (default: latest release)
 #   QS_REPO          owner/repo                  (default: PySudo/QuantoScript)
 #   QS_ARCHIVE       install from a local .tar.gz instead of downloading
 #   NO_MODIFY_PATH   set to 1 to skip editing your shell profile

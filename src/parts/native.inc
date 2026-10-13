@@ -2,11 +2,9 @@
 #include <Python.h>
 #endif
 
-// PCG32 PRNG state (portable, deterministic, cross-platform identical)
 static uint64_t g_pcg_state = 0x853c49e6748fea9bULL;
 static uint64_t g_pcg_inc = 0xda3e39cb94b95bdbULL;
 
-// Forward declarations for functions defined later in this file or in other files
 static int args_need(Parser *parser, CallArgList *args, size_t count, const char *name);
 static int arg_string(Parser *parser, CallArgList *args, size_t index, const char *name, const char **out);
 static int arg_integer(Parser *parser, CallArgList *args, size_t index, const char *name, long *out);
@@ -17,11 +15,11 @@ static int sandbox_check_path(const char *path);
 static Value make_response_map(int ok, long status, char *body, char *raw);
 static char *trim_string_copy(const char *text);
 static Value split_string_value(const char *text, const char *separator);
-// From 07_parser.inc
+
 static int values_equal(Value left, Value right);
 static int json_parse_value(const char *text, int *pos, Value *out, int *err);
 static char *json_stringify_value(Value value);
-// Windows-only HTTPS
+
 #ifdef _WIN32
 static char *https_request_winhttp(const char *method, const char *host, const char *port, const char *path, const char *body, long *status);
 #endif
@@ -169,7 +167,7 @@ static Value make_response_map(int ok, long status, char *body, char *raw) {
     Value response = make_dict_empty();
     dict_set(&response.as.dict, "ok", make_bool(ok));
     dict_set(&response.as.dict, "status", make_integer(status));
-    dict_set(&response.as.dict, "error", make_integer(0));
+    dict_set(&response.as.dict, "error", make_integer(g_last_http_error));
     dict_set(&response.as.dict, "body", make_string_owned(body ? body : qs_strdup("")));
     dict_set(&response.as.dict, "raw", make_string_owned(raw ? raw : qs_strdup("")));
     return response;
@@ -260,7 +258,9 @@ static char *https_request_winhttp(const char *method, const char *host, const c
         return NULL;
     }
 
-    HINTERNET session = WinHttpOpen(L"QuantoScript/1.0.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+    wchar_t user_agent[64];
+    swprintf(user_agent, 64, L"QuantoScript/%hs", QS_VERSION);
+    HINTERNET session = WinHttpOpen(user_agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) {
         g_last_http_error = GetLastError();
@@ -441,6 +441,89 @@ static int arg_integer(Parser *parser, CallArgList *args, size_t index, const ch
     return 1;
 }
 
+static int url_char_is_safe(unsigned char c) {
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) return 1;
+    switch (c) {
+        case '-': case '.': case '_': case '~':
+        case '!': case '$': case '&': case '\'': case '(': case ')':
+        case '*': case '+': case ',': case ';': case '=':
+        case ':': case '@': case '/': case '?': case '%':
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static char *url_encode_path(const char *path) {
+    size_t len = strlen(path);
+    char *out = malloc(len * 3 + 1);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(2); }
+    static const char hex[] = "0123456789ABCDEF";
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)path[i];
+        if (url_char_is_safe(c)) {
+            out[n++] = (char)c;
+        } else {
+            out[n++] = '%';
+            out[n++] = hex[c >> 4];
+            out[n++] = hex[c & 0x0F];
+        }
+    }
+    out[n] = '\0';
+    return out;
+}
+
+static char *url_encode_value(const char *text) {
+    size_t len = strlen(text);
+    char *out = malloc(len * 3 + 1);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(2); }
+    static const char hex[] = "0123456789ABCDEF";
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)text[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
+            out[n++] = (char)c;
+        } else {
+            out[n++] = '%';
+            out[n++] = hex[c >> 4];
+            out[n++] = hex[c & 0x0F];
+        }
+    }
+    out[n] = '\0';
+    return out;
+}
+
+static int hex_digit_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static char *url_decode_value(const char *text) {
+    size_t len = strlen(text);
+    char *out = malloc(len + 1);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(2); }
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = text[i];
+        if (c == '%' && i + 2 < len) {
+            int hi = hex_digit_value(text[i + 1]);
+            int lo = hex_digit_value(text[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out[n++] = (char)((hi << 4) | lo);
+                i += 2;
+                continue;
+            }
+        }
+        out[n++] = (c == '+') ? ' ' : c;
+    }
+    out[n] = '\0';
+    return out;
+}
+
 static int parse_http_url(const char *url, char **host, char **port, char **path, int *secure) {
     const char *prefix = NULL;
     const char *default_port = NULL;
@@ -470,7 +553,7 @@ static int parse_http_url(const char *url, char **host, char **port, char **path
         *host = qs_strndup(start, (size_t)(host_end - start));
         *port = qs_strdup(default_port);
     }
-    *path = qs_strdup(slash ? slash : "/");
+    *path = url_encode_path(slash ? slash : "/");
     return (*host)[0] != '\0' && (*port)[0] != '\0';
 }
 
@@ -639,8 +722,10 @@ static Value split_string_value(const char *text, const char *separator) {
 }
 
 static int call_builtin(Parser *parser, const char *name, CallArgList *args, Value *out) {
-    // Gate sys_* internal functions — only accessible from stdlib module context
     if (strncmp(name, "sys_", 4) == 0 && g_native_access_depth <= 0 && g_module_mode <= 0) {
+        char native_msg[256];
+        snprintf(native_msg, sizeof(native_msg), "'%s' requires native mode", name);
+        parser_error(parser, native_msg);
         return 0;
     }
     if (strcmp(name, "exit") == 0) {
@@ -687,6 +772,37 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         return 1;
     }
+
+    if (strcmp(name, "_iter_items") == 0) {
+        if (!args_need(parser, args, 1, name)) {
+            return 0;
+        }
+        Value value = args->items[0].value;
+        if (value.type == VALUE_INTEGER) {
+            Value lv = make_list_empty();
+            for (long k = 1; k <= value.as.integer; k++)
+                list_push(&lv.as.list, make_integer(k));
+            *out = lv;
+            return 1;
+        } else if (value.type == VALUE_STRING) {
+            Value lv = make_list_empty();
+            const char *s = value.as.string ? value.as.string : "";
+            for (size_t k = 0; s[k]; k++) {
+                char buf[2] = { s[k], '\0' };
+                list_push(&lv.as.list, make_string_owned(qs_strdup(buf)));
+            }
+            *out = lv;
+            return 1;
+        } else if (value.type == VALUE_DICT) {
+            Value lv = make_list_empty();
+            for (size_t k = 0; k < value.as.dict.count; k++)
+                list_push(&lv.as.list, make_string_owned(qs_strdup(value.as.dict.items[k].key)));
+            *out = lv;
+            return 1;
+        }
+        *out = clone_value(value);
+        return 1;
+    }
     if (strcmp(name, "isinstance") == 0) {
         if (!args_need(parser, args, 2, name)) {
             return 0;
@@ -704,6 +820,117 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         *out = make_string_owned(value_to_string(args->items[0].value));
         return 1;
+    }
+    if (strcmp(name, "morph") == 0) {
+        if (args->count != 2) {
+            parser_error(parser, "morph needs a value and a type name");
+            return 0;
+        }
+        Value value = args->items[0].value;
+        Value wanted = args->items[1].value;
+        const char *type = wanted.type == VALUE_STRING ? qs_type_alias(wanted.as.string) : NULL;
+        if (!type) {
+            parser_error(parser, "morph needs a type such as int, float, string, bool, list, or map");
+            return 0;
+        }
+        if (strcmp(type, "string") == 0) {
+            *out = make_string_owned(value_to_string(value));
+            return 1;
+        }
+        if (strcmp(type, "int") == 0) {
+            if (value.type == VALUE_INTEGER) {
+                *out = make_integer(value.as.integer);
+            } else if (value.type == VALUE_FLOAT) {
+                *out = make_integer((long)value.as.floating);
+            } else if (value.type == VALUE_BOOL) {
+                *out = make_integer(value.as.boolean ? 1 : 0);
+            } else if (value.type == VALUE_NULL) {
+                *out = make_integer(0);
+            } else if (value.type == VALUE_STRING) {
+                const char *text = value.as.string;
+                char *end = NULL;
+                long parsed = strtol(text, &end, 10);
+                while (end && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) end++;
+                if (end == text || (end && *end)) {
+                    char msg[160];
+                    snprintf(msg, sizeof(msg), "morph cannot read \"%s\" as int", text);
+                    parser_error(parser, msg);
+                    return 0;
+                }
+                *out = make_integer(parsed);
+            } else {
+                parser_error(parser, "morph cannot turn this value into int");
+                return 0;
+            }
+            return 1;
+        }
+        if (strcmp(type, "float") == 0) {
+            if (value.type == VALUE_FLOAT) {
+                *out = make_float(value.as.floating);
+            } else if (value.type == VALUE_INTEGER) {
+                *out = make_float((double)value.as.integer);
+            } else if (value.type == VALUE_BOOL) {
+                *out = make_float(value.as.boolean ? 1.0 : 0.0);
+            } else if (value.type == VALUE_NULL) {
+                *out = make_float(0.0);
+            } else if (value.type == VALUE_STRING) {
+                const char *text = value.as.string;
+                char *end = NULL;
+                double parsed = strtod(text, &end);
+                while (end && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) end++;
+                if (end == text || (end && *end)) {
+                    char msg[160];
+                    snprintf(msg, sizeof(msg), "morph cannot read \"%s\" as float", text);
+                    parser_error(parser, msg);
+                    return 0;
+                }
+                *out = make_float(parsed);
+            } else {
+                parser_error(parser, "morph cannot turn this value into float");
+                return 0;
+            }
+            return 1;
+        }
+        if (strcmp(type, "bool") == 0) {
+            if (value.type == VALUE_STRING) {
+                const char *text = value.as.string;
+                if (strcmp(text, "false") == 0 || strcmp(text, "0") == 0) {
+                    *out = make_bool(0);
+                } else {
+                    *out = make_bool(text[0] != '\0');
+                }
+            } else {
+                *out = make_bool(value_truthy(value));
+            }
+            return 1;
+        }
+        if (strcmp(type, "list") == 0) {
+            if (value.type == VALUE_LIST) {
+                *out = clone_value(value);
+                return 1;
+            }
+            if (value.type == VALUE_STRING) {
+                Value list = make_list_empty();
+                for (size_t i = 0; value.as.string[i]; i++) {
+                    char buf[2] = { value.as.string[i], '\0' };
+                    list_push(&list.as.list, make_string_owned(qs_strdup(buf)));
+                }
+                *out = list;
+                return 1;
+            }
+            parser_error(parser, "morph cannot turn this value into list");
+            return 0;
+        }
+        if (strcmp(type, "map") == 0) {
+            if (value.type == VALUE_DICT) {
+                *out = clone_value(value);
+                return 1;
+            }
+            parser_error(parser, "morph cannot turn this value into map");
+            return 0;
+        }
+        parser_error(parser, "morph does not know that type");
+        return 0;
     }
     if (strcmp(name, "range") == 0) {
         if (args->count < 1 || args->count > 3) {
@@ -814,9 +1041,8 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_float(floor(value_to_double(args->items[0].value)));
         return 1;
     }
-    // ---- PCG32 PRNG (portable, deterministic) ----
+
     if (strcmp(name, "random") == 0) {
-        // PCG32 next double in [0, 1)
         extern uint64_t g_pcg_state;
         extern uint64_t g_pcg_inc;
         uint64_t oldstate = g_pcg_state;
@@ -848,12 +1074,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         uint32_t xorshifted = (uint32_t)(((oldstate >> 18u) ^ oldstate) >> 27u);
         uint32_t rot = (uint32_t)(oldstate >> 59u);
         uint32_t rng = (xorshifted >> rot) | (xorshifted << ((-(int)rot) & 31));
-        // Use unsigned cast to avoid sign extension on LLP64 (Windows 64-bit where long=32bit)
+
         *out = make_integer((long)(int32_t)rng);
         return 1;
     }
-    // Bounded random: returns min + (rng % span) where span = max - min + 1
-    // Computed entirely in C with unsigned arithmetic to avoid signed modulo issues.
+
     if (strcmp(name, "sys_pcg_u32_range") == 0) {
         if (args->count != 2) { parser_error(parser, "sys_pcg_u32_range needs (min, max)"); return 0; }
         long min_val = args->items[0].value.as.integer;
@@ -874,13 +1099,13 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_integer(min_val + (long)offset);
         return 1;
     }
-    // Regex: match pattern against string
+
     if (strcmp(name, "regex_match") == 0) {
         if (args->count != 2) { parser_error(parser, "regex_match needs pattern and string"); return 0; }
         const char *pattern = args->items[0].value.as.string;
         const char *text = args->items[1].value.as.string;
 #ifdef _WIN32
-        // Simple substring match on Windows (no regex support)
+
         *out = make_bool(strstr(text, pattern) != NULL);
 #else
         regex_t re;
@@ -892,14 +1117,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 #endif
         return 1;
     }
-    // Regex: find all matches
+
     if (strcmp(name, "regex_find") == 0) {
         if (args->count != 2) { parser_error(parser, "regex_find needs pattern and string"); return 0; }
         const char *pattern = args->items[0].value.as.string;
         const char *text = args->items[1].value.as.string;
         ValueList matches = {0};
 #ifdef _WIN32
-        // Simple substring search on Windows
+
         const char *search = text;
         size_t pat_len = strlen(pattern);
         while ((search = strstr(search, pattern)) != NULL) {
@@ -922,13 +1147,13 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = (Value){.type = VALUE_LIST, .as.list = matches};
         return 1;
     }
-    // Regex: replace all matches
+
     if (strcmp(name, "regex_replace") == 0) {
         if (args->count != 3) { parser_error(parser, "regex_replace needs pattern, replacement, and string"); return 0; }
         const char *pattern = args->items[0].value.as.string;
         const char *replacement = args->items[1].value.as.string;
         const char *text = args->items[2].value.as.string;
-        // Use simple string replacement (works on both platforms)
+
         char *result = NULL;
         size_t text_len = strlen(text);
         size_t pat_len = strlen(pattern);
@@ -990,13 +1215,12 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_null();
         return 1;
     }
-    // WebSocket: Connect to a WebSocket server
+
     if (strcmp(name, "ws_connect") == 0) {
         if (args->count != 1) { parser_error(parser, "ws_connect needs a URL"); return 0; }
         const char *url = NULL;
         if (!arg_string(parser, args, 0, name, &url)) return 0;
 
-        // Parse URL
         char *host = NULL, *port = NULL, *path = NULL;
         int secure = 0;
         if (!parse_http_url(url, &host, &port, &path, &secure)) {
@@ -1005,7 +1229,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             return 0;
         }
 
-        // Generate WebSocket key (16 random bytes, base64-encoded per RFC 6455)
         unsigned char key_raw[16];
         srand((unsigned int)time(NULL));
         for (int i = 0; i < 16; i++) {
@@ -1025,7 +1248,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         key[k] = '\0';
 
-        // Connect to server
         qs_socket_t sock = tcp_connect_socket(host, port);
         if (sock == QS_INVALID_SOCKET) {
             free(host); free(port); free(path);
@@ -1033,7 +1255,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             return 1;
         }
 
-        // Build upgrade request
         size_t req_len = strlen(host) + strlen(path) + strlen(key) + 256;
         char *request = malloc(req_len);
         snprintf(request, req_len,
@@ -1046,7 +1267,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             "\r\n",
             path, host, key);
 
-        // Send upgrade request
         size_t sent = 0;
         size_t request_size = strlen(request);
         while (sent < request_size) {
@@ -1062,7 +1282,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         free(request);
 
-        // Read response
         char response_buf[4096];
         int response_len = recv(sock, response_buf, sizeof(response_buf) - 1, 0);
         if (response_len <= 0) {
@@ -1073,7 +1292,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         response_buf[response_len] = '\0';
 
-        // Check for 101 Switching Protocols
         if (strstr(response_buf, "101") == NULL) {
             free(host); free(port); free(path);
             qs_close_socket(sock);
@@ -1085,24 +1303,22 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_float((double)(intptr_t)sock);
         return 1;
     }
-    // WebSocket: Send a text message
+
     if (strcmp(name, "ws_send") == 0) {
         if (args->count != 2) { parser_error(parser, "ws_send needs socket and message"); return 0; }
         qs_socket_t sock = (qs_socket_t)(intptr_t)args->items[0].value.as.floating;
         const char *msg = args->items[1].value.as.string;
         size_t msg_len = strlen(msg);
 
-        // Generate mask key (RFC 6455: client frames MUST be masked)
         unsigned char mask[4];
         for (int i = 0; i < 4; i++) mask[i] = (unsigned char)(rand() & 0xFF);
 
-        // Build WebSocket frame (text, FIN set, masked)
         size_t frame_len = 2 + 4 + (msg_len > 125 ? (msg_len > 65535 ? 8 : 2) : 0) + msg_len;
         char *frame = malloc(frame_len);
-        frame[0] = (char)0x81; // FIN + TEXT opcode
+        frame[0] = (char)0x81;
 
         if (msg_len <= 125) {
-            frame[1] = (char)(0x80 | msg_len); // MASK bit set
+            frame[1] = (char)(0x80 | msg_len);
             frame[2] = mask[0]; frame[3] = mask[1]; frame[4] = mask[2]; frame[5] = mask[3];
             for (size_t i = 0; i < msg_len; i++)
                 frame[6 + i] = msg[i] ^ mask[i % 4];
@@ -1132,12 +1348,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_bool(1);
         return 1;
     }
-    // WebSocket: Receive a text message
+
     if (strcmp(name, "ws_recv") == 0) {
         if (args->count != 1) { parser_error(parser, "ws_recv needs a socket"); return 0; }
         qs_socket_t sock = (qs_socket_t)(intptr_t)args->items[0].value.as.floating;
 
-        // Read frame header
         unsigned char header[2];
         int got = recv(sock, (char *)header, 2, 0);
         if (got <= 0) { *out = make_null(); return 1; }
@@ -1159,13 +1374,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             }
         }
 
-        // Read mask key if present
         unsigned char mask_key[4] = {0};
         if (masked) {
             recv(sock, (char *)mask_key, 4, 0);
         }
 
-        // Read payload
         char *payload = malloc(payload_len + 1);
         size_t received = 0;
         while (received < payload_len) {
@@ -1174,7 +1387,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             received += r;
         }
 
-        // Unmask if needed
         if (masked) {
             for (uint64_t i = 0; i < payload_len; i++) {
                 payload[i] ^= mask_key[i % 4];
@@ -1182,16 +1394,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         payload[payload_len] = '\0';
 
-        // Handle ping/pong
-        if (opcode == 9) { // Ping
-            // Send pong
+        if (opcode == 9) {
             char pong[2] = {(char)0x8A, 0x00};
             send(sock, pong, 2, 0);
             free(payload);
             *out = make_null();
             return 1;
         }
-        if (opcode == 8) { // Close
+        if (opcode == 8) {
             free(payload);
             *out = make_null();
             return 1;
@@ -1200,11 +1410,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_string_owned(payload);
         return 1;
     }
-    // WebSocket: Close connection
+
     if (strcmp(name, "ws_close") == 0) {
         if (args->count != 1) { parser_error(parser, "ws_close needs a socket"); return 0; }
         qs_socket_t sock = (qs_socket_t)(intptr_t)args->items[0].value.as.floating;
-        // Send masked close frame (RFC 6455: client frames must be masked)
+
         unsigned char mask[4];
         for (int i = 0; i < 4; i++) mask[i] = (unsigned char)(rand() & 0xFF);
         char close_frame[6] = {(char)0x88, (char)0x80, (char)mask[0], (char)mask[1], (char)mask[2], (char)mask[3]};
@@ -1213,14 +1423,13 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_null();
         return 1;
     }
-    // WebSocket: Get connection state
+
     if (strcmp(name, "ws_state") == 0) {
         if (args->count != 1) { parser_error(parser, "ws_state needs a socket"); return 0; }
         qs_socket_t sock = (qs_socket_t)(intptr_t)args->items[0].value.as.floating;
         if (sock == QS_INVALID_SOCKET || sock == 0) {
             *out = make_string_owned(qs_strdup("closed"));
         } else {
-            // Try a zero-length peek to check if connection is still alive
             char peek_buf[1];
             int peek_result = recv(sock, peek_buf, 1, MSG_PEEK);
             if (peek_result == 0) {
@@ -1230,7 +1439,6 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
                 if (err == QS_WOULDBLOCK || err == QS_IN_PROGRESS || err == QS_TIMEDOUT) {
                     *out = make_string_owned(qs_strdup("open"));
                 } else {
-                    // Any other error means the connection is dead
                     *out = make_string_owned(qs_strdup("closed"));
                 }
             } else {
@@ -1239,7 +1447,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         return 1;
     }
-    // WebSocket: Set receive timeout in milliseconds
+
     if (strcmp(name, "ws_set_timeout") == 0) {
         if (args->count != 2) { parser_error(parser, "ws_set_timeout needs socket and ms"); return 0; }
         qs_socket_t sock = (qs_socket_t)(intptr_t)args->items[0].value.as.floating;
@@ -1257,13 +1465,12 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
 #ifdef QS_PYTHON
-    // Python: initialize interpreter
+
     if (strcmp(name, "python_init") == 0) {
         if (!Py_IsInitialized()) {
-            // Set PYTHONHOME to suppress platform warning
             if (!getenv("PYTHONHOME")) {
 #ifdef _WIN32
-                // Try common Windows Python locations
+
                 const char *locations[] = {
                     "C:\\Python311",
                     "C:\\Python310",
@@ -1289,7 +1496,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_bool(1);
         return 1;
     }
-    // Python: finalize interpreter
+
     if (strcmp(name, "python_finalize") == 0) {
         if (Py_IsInitialized()) {
             Py_Finalize();
@@ -1297,13 +1504,13 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_bool(1);
         return 1;
     }
-    // Python: evaluate code string
+
     if (strcmp(name, "python_eval") == 0) {
         if (args->count != 1) { parser_error(parser, "python_eval needs code string"); return 0; }
         if (!Py_IsInitialized()) { parser_error(parser, "python not initialized, call python_init() first"); return 0; }
         const char *code = args->items[0].value.as.string;
         PyObject *main_dict = PyModule_GetDict(PyImport_AddModule("__main__"));
-        // Try eval first, fall back to exec
+
         PyObject *result = PyRun_String(code, Py_eval_input, main_dict, main_dict);
         if (!result) {
             PyErr_Clear();
@@ -1314,7 +1521,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             *out = make_null();
             return 1;
         }
-        // Convert Python result to QuantoScript value
+
         if (result == Py_None) {
             *out = make_null();
         } else if (PyLong_Check(result)) {
@@ -1368,7 +1575,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         Py_DECREF(result);
         return 1;
     }
-    // Python: call a function
+
     if (strcmp(name, "python_call") == 0) {
         if (args->count < 1) { parser_error(parser, "python_call needs function name and args"); return 0; }
         if (!Py_IsInitialized()) { parser_error(parser, "python not initialized"); return 0; }
@@ -1403,7 +1610,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             *out = make_null();
             return 1;
         }
-        // Convert result
+
         if (result == Py_None) {
             *out = make_null();
         } else if (PyLong_Check(result)) {
@@ -1418,7 +1625,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         Py_DECREF(result);
         return 1;
     }
-    // Python: import module
+
     if (strcmp(name, "python_import") == 0) {
         if (args->count != 1) { parser_error(parser, "python_import needs module name"); return 0; }
         if (!Py_IsInitialized()) { parser_error(parser, "python not initialized"); return 0; }
@@ -1429,14 +1636,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             *out = make_null();
             return 1;
         }
-        // Store module in main dict for later access
+
         PyObject *main_dict = PyModule_GetDict(PyImport_AddModule("__main__"));
         PyDict_SetItemString(main_dict, module_name, module);
         Py_DECREF(module);
         *out = make_bool(1);
         return 1;
     }
-    // Python: get attribute from module
+
     if (strcmp(name, "python_get") == 0) {
         if (args->count != 2) { parser_error(parser, "python_get needs module and attribute"); return 0; }
         if (!Py_IsInitialized()) { parser_error(parser, "python not initialized"); return 0; }
@@ -1468,14 +1675,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
 #endif
-    // Thread: spawn a function in a new OS thread
+
     if (strcmp(name, "thread_spawn") == 0) {
         if (args->count != 1) { parser_error(parser, "thread_spawn needs a function"); return 0; }
         if (args->items[0].value.type != VALUE_LAMBDA) {
             parser_error(parser, "thread_spawn needs a lambda");
             return 0;
         }
-        // Execute the lambda synchronously (full threading requires interpreter rewrite)
+
         CallArgList empty_args = {0};
         Value result;
         if (!call_lambda(parser, &args->items[0].value, &empty_args, &result)) {
@@ -1485,7 +1692,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         free_value(result);
         return 1;
     }
-    // Async: create a new task
+
     if (strcmp(name, "spawn") == 0 || strcmp(name, "sys_spawn") == 0) {
         if (args->count != 1) { parser_error(parser, "spawn needs a function"); return 0; }
         if (args->items[0].value.type != VALUE_LAMBDA) {
@@ -1496,7 +1703,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_integer(task_id);
         return 1;
     }
-    // Async: execute a task
+
     if (strcmp(name, "task_run") == 0 || strcmp(name, "sys_task_run") == 0) {
         if (args->count != 1) { parser_error(parser, "task_run needs a task id"); return 0; }
         int task_id = (int)args->items[0].value.as.integer;
@@ -1516,7 +1723,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_bool(1);
         return 1;
     }
-    // Async: get task result
+
     if (strcmp(name, "task_result") == 0 || strcmp(name, "sys_task_result") == 0) {
         if (args->count != 1) { parser_error(parser, "task_result needs a task id"); return 0; }
         int task_id = (int)args->items[0].value.as.integer;
@@ -1525,7 +1732,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = clone_value(task->result);
         return 1;
     }
-    // Async: check task status
+
     if (strcmp(name, "task_status") == 0 || strcmp(name, "sys_task_status") == 0) {
         if (args->count != 1) { parser_error(parser, "task_status needs a task id"); return 0; }
         int task_id = (int)args->items[0].value.as.integer;
@@ -1542,7 +1749,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_string_owned(qs_strdup(status_str));
         return 1;
     }
-    // Async: run all ready tasks cooperatively
+
     if (strcmp(name, "task_run_all") == 0 || strcmp(name, "sys_task_run_all") == 0) {
         int ran = 0;
         for (size_t i = 0; i < g_task_queue.count; i++) {
@@ -1562,7 +1769,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_integer(ran);
         return 1;
     }
-    // FFI: Load a shared library
+
     if (strcmp(name, "ffi_open") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_open needs a library path"); return 0; }
         const char *lib_path = NULL;
@@ -1578,7 +1785,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 #endif
         return 1;
     }
-    // FFI: Get a function pointer
+
     if (strcmp(name, "ffi_symbol") == 0) {
         if (args->count != 2) { parser_error(parser, "ffi_symbol needs lib and name"); return 0; }
         intptr_t lib_handle = (intptr_t)args->items[0].value.as.floating;
@@ -1593,7 +1800,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_float((double)(intptr_t)sym);
         return 1;
     }
-    // FFI: Call a C function with int args and int return
+
     if (strcmp(name, "ffi_call_i") == 0) {
         if (args->count < 1) { parser_error(parser, "ffi_call_i needs func and args"); return 0; }
         intptr_t func_ptr = (intptr_t)args->items[0].value.as.floating;
@@ -1609,7 +1816,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_integer(result);
         return 1;
     }
-    // FFI: Call a C function with float args and float return
+
     if (strcmp(name, "ffi_call_f") == 0) {
         if (args->count < 1) { parser_error(parser, "ffi_call_f needs func and args"); return 0; }
         intptr_t func_ptr = (intptr_t)args->items[0].value.as.floating;
@@ -1623,7 +1830,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_float(result);
         return 1;
     }
-    // FFI: Call a C function with string arg and string return
+
     if (strcmp(name, "ffi_call_s") == 0) {
         if (args->count < 2) { parser_error(parser, "ffi_call_s needs func and string arg"); return 0; }
         intptr_t func_ptr = (intptr_t)args->items[0].value.as.floating;
@@ -1634,7 +1841,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = result ? make_string_owned(qs_strdup(result)) : make_null();
         return 1;
     }
-    // FFI: Close a library
+
     if (strcmp(name, "ffi_close") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_close needs a library handle"); return 0; }
         intptr_t lib_handle = (intptr_t)args->items[0].value.as.floating;
@@ -1646,7 +1853,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_null();
         return 1;
     }
-    // FFI: Allocate memory
+
     if (strcmp(name, "ffi_alloc") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_alloc needs a size"); return 0; }
         long size = args->items[0].value.as.integer;
@@ -1654,7 +1861,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = ptr ? make_float((double)(intptr_t)ptr) : make_null();
         return 1;
     }
-    // FFI: Free memory
+
     if (strcmp(name, "ffi_free") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_free needs a pointer"); return 0; }
         intptr_t ptr = (intptr_t)args->items[0].value.as.floating;
@@ -1662,7 +1869,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_null();
         return 1;
     }
-    // FFI: Read string from pointer
+
     if (strcmp(name, "ffi_read_string") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_read_string needs a pointer"); return 0; }
         intptr_t ptr = (intptr_t)args->items[0].value.as.floating;
@@ -1670,7 +1877,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = str ? make_string_owned(qs_strdup(str)) : make_null();
         return 1;
     }
-    // FFI: Write string to pointer
+
     if (strcmp(name, "ffi_write_string") == 0) {
         if (args->count != 2) { parser_error(parser, "ffi_write_string needs ptr and string"); return 0; }
         intptr_t ptr = (intptr_t)args->items[0].value.as.floating;
@@ -1754,6 +1961,21 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_integer((long)time(NULL));
         return 1;
     }
+    if (strcmp(name, "sys_sleep") == 0) {
+        long ms = 0;
+        if (!args_need(parser, args, 1, name) || !arg_integer(parser, args, 0, name, &ms)) {
+            return 0;
+        }
+        if (ms > 0) {
+#ifdef _WIN32
+            Sleep((DWORD)ms);
+#else
+            usleep((useconds_t)ms * 1000);
+#endif
+        }
+        *out = make_null();
+        return 1;
+    }
     if (strcmp(name, "sys_localtime") == 0) {
         time_t now = time(NULL);
         struct tm *t = localtime(&now);
@@ -1783,7 +2005,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
     if (strcmp(name, "sys_parse_time") == 0) {
         if (args->count != 2) { parser_error(parser, "sys_parse_time needs text and format"); return 0; }
         const char *text = args->items[0].value.as.string;
-        (void)args->items[1].value.as.string; // fmt parameter reserved for future use
+        (void)args->items[1].value.as.string;
         struct tm tm = {0};
         int year = 0, month = 1, day = 1, hour = 0, min = 0, sec = 0;
         if (sscanf(text, "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &min, &sec) >= 1) {
@@ -1998,7 +2220,22 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_string_owned(json);
         return 1;
     }
-    // ---- Process execution ----
+
+    if (strcmp(name, "sys_url_encode") == 0) {
+        if (!args_need(parser, args, 1, name)) return 0;
+        const char *text = NULL;
+        if (!arg_string(parser, args, 0, name, &text)) return 0;
+        *out = make_string_owned(url_encode_value(text));
+        return 1;
+    }
+    if (strcmp(name, "sys_url_decode") == 0) {
+        if (!args_need(parser, args, 1, name)) return 0;
+        const char *text = NULL;
+        if (!arg_string(parser, args, 0, name, &text)) return 0;
+        *out = make_string_owned(url_decode_value(text));
+        return 1;
+    }
+
     if (strcmp(name, "sys_run") == 0) {
         if (!args_need(parser, args, 1, "sys_run")) return 0;
         const char *cmd = NULL;
@@ -2032,7 +2269,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
         buf[len] = '\0';
         pclose(pipe);
-        // Strip trailing newline
+
         while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r'))
             buf[--len] = '\0';
         *out = make_string_owned(buf);
@@ -2082,8 +2319,10 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 static int is_builtin_function(const char *name) {
     return strcmp(name, "exit") == 0 || strcmp(name, "ever_return") == 0 ||
            strcmp(name, "abs") == 0 || strcmp(name, "len") == 0 ||
+           strcmp(name, "_iter_items") == 0 ||
            strcmp(name, "type") == 0 || strcmp(name, "isinstance") == 0 ||
            strcmp(name, "str") == 0 || strcmp(name, "range") == 0 ||
+           strcmp(name, "morph") == 0 ||
            strcmp(name, "assert") == 0 ||
            strcmp(name, "pow") == 0 || strcmp(name, "sqrt") == 0 ||
            strcmp(name, "sin") == 0 || strcmp(name, "cos") == 0 ||
@@ -2112,6 +2351,7 @@ static int is_builtin_function(const char *name) {
            strcmp(name, "task_status") == 0 || strcmp(name, "sys_task_status") == 0 ||
            strcmp(name, "task_run_all") == 0 || strcmp(name, "sys_task_run_all") == 0 ||
            strcmp(name, "input") == 0 || strcmp(name, "sys_time") == 0 ||
+           strcmp(name, "sys_sleep") == 0 ||
            strcmp(name, "sys_localtime") == 0 || strcmp(name, "sys_format_time") == 0 ||
            strcmp(name, "sys_parse_time") == 0 ||
            strcmp(name, "sys_lower") == 0 || strcmp(name, "sys_upper") == 0 ||
@@ -2125,6 +2365,7 @@ static int is_builtin_function(const char *name) {
            strcmp(name, "sys_http_post") == 0 || strcmp(name, "sys_http_put") == 0 ||
            strcmp(name, "sys_http_delete") == 0 || strcmp(name, "sys_http_patch") == 0 ||
            strcmp(name, "sys_json_parse") == 0 || strcmp(name, "sys_json_stringify") == 0 ||
+           strcmp(name, "sys_url_encode") == 0 || strcmp(name, "sys_url_decode") == 0 ||
            strcmp(name, "sys_run") == 0 || strcmp(name, "sys_capture") == 0 ||
            strcmp(name, "sys_cwd") == 0 || strcmp(name, "sys_chdir") == 0 ||
            strcmp(name, "sys_exec_exists") == 0 ||

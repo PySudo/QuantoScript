@@ -16,7 +16,7 @@ print("ha" * 3)
 print(3 * "yo")
 
 # Quotes can appear inside strings when they are not the closing quote.
-funny = 'i use ' inside this string.'
+funny = "i use ' inside this string."
 print(funny)
 
 # Indexes start at 1.

@@ -12,31 +12,6 @@ static void program_push(Program *program, char *line) {
     program->items[program->count++] = line;
 }
 
-// Split merged statement text into individual lines on a Program.
-// Boundary detection: at brace depth 0, after }, ), digit, quote, or name-end,
-// check if the next name is followed by =, (, or is a block keyword (while/if/repeat/try/func/class/from).
-// Brace depth > 0 suppresses all boundary detection (preserves while/if/repeat bodies).
-// Statement splitter: split merged single-line text into individual statements.
-//
-// The file loader merges multi-line blocks into single lines. This function
-// reverses that for method bodies, loop bodies, etc.
-//
-// Algorithm: deterministic state machine (SCAN / STR_DQ / STR_SQ) with
-// brace-depth tracking. A statement boundary is detected at every name-start
-// character at brace depth 0 using:
-//
-//   1) BACKWARD: prev non-ws is } ) ] " ' digit → boundary
-//   2) BACKWARD: start of text → boundary
-//   3) BACKWARD: prev is name AND current word is block keyword → boundary
-//   4) FORWARD:  current name is followed by [field accesses] = → boundary
-//                (but NOT if current name is "return" — it takes a value)
-//
-// This correctly handles all cases including:
-//   return expr          (rule 4 blocked: current is "return" → no split)
-//   x = helper() return  (rule 1: prev=')' → split)
-//   self.total + i i = 1 (rule 4: peek sees "= " → split)
-//   while{...} y = 2     (rule 1: prev='}' → split)
-//   print("a") print("b")(rule 1: prev=')' → split)
 static void split_text_to_program(const char *text, Program *prog) {
     enum { SCAN, STR_DQ, STR_SQ } state = SCAN;
     int bd = 0;
@@ -77,12 +52,9 @@ static void split_text_to_program(const char *text, Program *prog) {
         if (ch == '\0') { EMIT(bi); break; }
 
         if (bd > 0 || !is_name_start(ch)) continue;
-        // Only at the FIRST character of a new identifier (not mid-name or after '.')
+
         if (bi > 0 && (is_name_part(text[bi - 1]) || text[bi - 1] == '.')) continue;
 
-        // --- Statement boundary check at name-start, bd == 0 ---
-
-        // Rule 1+2: backward — prev non-ws char determines boundary
         size_t prev = bi;
         while (prev > 0 && (text[prev-1] == ' ' || text[prev-1] == '\t')) prev--;
         char pc = (prev > 0) ? text[prev - 1] : '\0';
@@ -97,7 +69,6 @@ static void split_text_to_program(const char *text, Program *prog) {
         } else if (pc >= '0' && pc <= '9') {
             boundary = 1;
         } else if (is_name_part(pc)) {
-            // Rule 3: prev is name → boundary only if current is block keyword
             size_t ni = bi;
             while (ni < blen && is_name_part(text[ni])) ni++;
             size_t kl = ni - bi;
@@ -107,23 +78,26 @@ static void split_text_to_program(const char *text, Program *prog) {
                         (kl == 3 && !strncmp(text+bi,"try",3)) ||
                         (kl == 4 && !strncmp(text+bi,"func",4)) ||
                         (kl == 5 && !strncmp(text+bi,"class",5)) ||
-                        (kl == 4 && !strncmp(text+bi,"from",4)));
+                        (kl == 4 && !strncmp(text+bi,"from",4)) ||
+                        (kl == 6 && !strncmp(text+bi,"return",6)) ||
+                        (kl == 5 && !strncmp(text+bi,"print",5)) ||
+                        (kl == 5 && !strncmp(text+bi,"break",5)) ||
+                        (kl == 8 && !strncmp(text+bi,"continue",8)) ||
+                        (kl == 4 && !strncmp(text+bi,"oops",4)));
         }
 
-        // Rule 4: forward — peek at what follows the current name
         if (!boundary) {
             size_t ni = bi;
             while (ni < blen && is_name_part(text[ni])) ni++;
-            // Skip field accesses: .name
+
             size_t pi = ni;
             while (pi < blen && text[pi] == '.') {
                 pi++;
                 while (pi < blen && is_name_part(text[pi])) pi++;
             }
-            // Skip whitespace
+
             while (pi < blen && (text[pi] == ' ' || text[pi] == '\t')) pi++;
-            if (pi < blen && text[pi] == '=') {
-                // Don't split "return expr" — return takes a value
+            if (pi < blen && text[pi] == '=' && (pi + 1 >= blen || text[pi + 1] != '=')) {
                 size_t kl = ni - bi;
                 if (!(kl == 6 && !strncmp(text+bi,"return",6)))
                     boundary = 1;
@@ -264,8 +238,19 @@ static int load_program_file(const char *path, Program *program) {
     int paren_depth = 0;
     int bracket_depth = 0;
     int brace_depth = 0;
+    int first_line = 1;
     while (fgets(buffer, sizeof(buffer), file)) {
         size_t len = strlen(buffer);
+        if (first_line) {
+            first_line = 0;
+            if (len >= 3 &&
+                (unsigned char)buffer[0] == 0xEF &&
+                (unsigned char)buffer[1] == 0xBB &&
+                (unsigned char)buffer[2] == 0xBF) {
+                memmove(buffer, buffer + 3, len - 3 + 1);
+                len -= 3;
+            }
+        }
         if (len && buffer[len - 1] == '\n') {
             buffer[--len] = '\0';
         }
@@ -394,7 +379,6 @@ static int execute_range(Program *program, Environment *env, size_t start, size_
 static void free_environment(Environment *env);
 static char *value_to_string(Value value);
 
-// Load source text into a Program (split by newlines)
 static int load_source(const char *text, Program *program) {
     memset(program, 0, sizeof(*program));
     program->path = qs_strdup("<eval>");
@@ -407,7 +391,7 @@ static int load_source(const char *text, Program *program) {
         char *line = malloc(len + 1);
         memcpy(line, p, len);
         line[len] = '\0';
-        // Strip trailing \r
+
         if (len > 0 && line[len - 1] == '\r') line[--len] = '\0';
         program_push(program, line);
         if (*nl == '\n') nl++;
