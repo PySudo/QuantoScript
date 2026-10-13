@@ -55,6 +55,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           .\tests\run_regression.ps1 -Verbose
           if ($LASTEXITCODE -ne 0) { exit 1 }
 

@@ -901,6 +901,28 @@ static int ws_tls_init_once(void) {
     return 1;
 }
 
+#if QS_HAVE_POSIX_REGEX
+/* POSIX regex engines have no inline-flag syntax of their own; translate a
+   leading "(?imsx)" group into the equivalent cflags (only "i" maps to a POSIX
+   flag) so a pattern behaves the same on glibc and on libsystre. */
+static const char *regex_translate_flags(const char *pattern, int *cflags) {
+    while (pattern[0] == '(' && pattern[1] == '?') {
+        const char *close = strchr(pattern + 2, ')');
+        if (!close) break;
+        int valid = 1;
+        for (const char *c = pattern + 2; c < close; c++) {
+            if (*c != 'i' && *c != 'm' && *c != 's' && *c != 'x') { valid = 0; break; }
+        }
+        if (!valid) break;
+        for (const char *c = pattern + 2; c < close; c++) {
+            if (*c == 'i') *cflags |= REG_ICASE;
+        }
+        pattern = close + 1;
+    }
+    return pattern;
+}
+#endif
+
 static int call_builtin(Parser *parser, const char *name, CallArgList *args, Value *out) {
     if (strncmp(name, "sys_", 4) == 0 && g_native_access_depth <= 0 && g_module_mode <= 0) {
         char native_msg[256];
@@ -1328,7 +1350,9 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_bool(strstr(text, pattern) != NULL);
 #else
         regex_t re;
-        int ret = regcomp(&re, pattern, REG_EXTENDED);
+        int cflags = REG_EXTENDED;
+        pattern = regex_translate_flags(pattern, &cflags);
+        int ret = regcomp(&re, pattern, cflags);
         if (ret != 0) { parser_error(parser, "invalid regex pattern"); return 0; }
         ret = regexec(&re, text, 0, NULL, 0);
         regfree(&re);
@@ -1352,7 +1376,9 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
 #else
         regex_t re;
-        int ret = regcomp(&re, pattern, REG_EXTENDED);
+        int cflags = REG_EXTENDED;
+        pattern = regex_translate_flags(pattern, &cflags);
+        int ret = regcomp(&re, pattern, cflags);
         if (ret != 0) { parser_error(parser, "invalid regex pattern"); return 0; }
         regmatch_t match;
         const char *search = text;
@@ -1393,7 +1419,9 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         }
 #else
         regex_t re;
-        int reg_ret = regcomp(&re, pattern, REG_EXTENDED);
+        int cflags = REG_EXTENDED;
+        pattern = regex_translate_flags(pattern, &cflags);
+        int reg_ret = regcomp(&re, pattern, cflags);
         if (reg_ret != 0) { parser_error(parser, "invalid regex pattern"); free(result); return 0; }
         regmatch_t match;
         while (*search && regexec(&re, search, 1, &match, 0) == 0) {
