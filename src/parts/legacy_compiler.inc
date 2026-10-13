@@ -1123,7 +1123,7 @@ static QS_UNUSED_FN int compile_file(const char *input_path, const char *output_
     const char *regex_flag = "";
 #endif
     snprintf(command, sizeof(command),
-             "gcc -std=c99 -O2 -DNDEBUG -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt%s",
+             "gcc -std=c99 -O2 -DNDEBUG -static -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt%s",
              runtime_dir, generated_path, output_path, regex_flag);
 #else
     snprintf(command, sizeof(command),

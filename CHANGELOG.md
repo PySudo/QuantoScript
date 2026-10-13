@@ -15,7 +15,7 @@ All notable changes to QuantoScript will be documented in this file.
 - `regex_match` / `regex_find` / `regex_replace` now accept a leading inline case-insensitive flag (`(?i)`), translating it to the portable `REG_ICASE` flag. Previously `(?i)` was accepted by libsystre on Windows but rejected by glibc's POSIX engine on Linux/macOS, which made the same pattern behave differently per platform.
 
 ### Tooling
-- Windows builds now link the POSIX-regex dependency chain (`libsystre` → `libtre` → `gettext` → `iconv`) statically, so the Windows binary has no extra DLL dependencies; together with the static OpenSSL link this keeps released Windows binaries self-contained. The `Makefile`, `qs compile`, and CI link the regex libraries only where `<regex.h>` is available (`mingw-w64-*-libsystre`).
+- Windows binaries now link the POSIX-regex dependency chain (`libsystre` → `libtre` → `gettext` → `iconv`) statically, so `qs.exe` has no extra DLL dependencies; together with the static OpenSSL link this keeps released Windows binaries self-contained. `qs compile` likewise emits fully static Windows binaries. The `Makefile`, `qs compile`, and CI link the regex libraries only where `<regex.h>` is available (`mingw-w64-*-libsystre`).
 - Windows CI copies the OpenSSL DLLs the CI build links against next to `qs.exe` before running the regression suite, so the MinGW binary loads its dependencies without relying on `PATH`. The release pipeline now also verifies that the Windows binary imports no non-system DLLs.
 
 ## [1.1.0] — 2026-10-13
