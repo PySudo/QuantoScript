@@ -1033,6 +1033,10 @@ static int parse_call_args(Parser *parser, ValueList *args) {
 }
 
 static int apply_method(Parser *parser, Value *out, const char *method, ValueList *args) {
+    if (out->type == VALUE_OBJECT) {
+        goto object_method;
+    }
+
     if (strcmp(method, "append") == 0) {
         if (out->type != VALUE_LIST) {
             parser_error(parser, "append works only on lists");
@@ -1256,6 +1260,31 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         free(key);
         free_value(*out);
         *out = make_bool(found);
+        return 1;
+    }
+
+    if (strcmp(method, "get") == 0) {
+        if (out->type != VALUE_DICT) {
+            parser_error(parser, "get works only on maps");
+            return 0;
+        }
+        if (args->count < 1 || args->count > 2) {
+            parser_error(parser, "get needs a key and an optional default");
+            return 0;
+        }
+        char *key = value_to_string(args->items[0]);
+        int idx = dict_find(&out->as.dict, key);
+        free(key);
+        Value result;
+        if (idx >= 0) {
+            result = clone_value(out->as.dict.items[idx].value);
+        } else if (args->count == 2) {
+            result = clone_value(args->items[1]);
+        } else {
+            result = make_null();
+        }
+        free_value(*out);
+        *out = result;
         return 1;
     }
 
@@ -1692,6 +1721,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         return 1;
     }
 
+object_method:
     if (out->type == VALUE_OBJECT) {
         char mk[256];
         snprintf(mk, sizeof(mk), "%s.%s", out->as.object.data->class_name, method);

@@ -4,6 +4,17 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-10-14
+
+### Features
+- Added `get(key[, default])` to maps: returns the value for `key`, the `default` when the key is missing, or `null` when no default is supplied. This avoids testing with `has` before indexing; reading a missing key with `m["key"]` still throws.
+
+### Bug Fixes
+- User-defined class methods now take precedence over built-in collection methods on the tree-walk interpreter, matching the bytecode VM. Previously a class with a method named like a built-in (for example `get`) raised `get works only on maps` on the interpreter while working on the VM.
+
+### Documentation
+- Documented the map `get` method in the Maps guide and simplified the `.env` loading examples to use `cfg.get("API_KEY", "not set")`.
+
 ## [1.1.2] — 2026-10-14
 
 ### Features

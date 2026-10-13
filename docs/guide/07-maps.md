@@ -45,6 +45,7 @@ print(user)             # {'name': 'Mina', 'age': 20}
 | Method | Description | Example | Result |
 |--------|-------------|---------|--------|
 | `has(key)` | test whether a key exists | `map("a"=1).has("a")` | `true` |
+| `get(key, default)` | value for `key`, or `default` if missing | `map("a"=1).get("b", 0)` | `0` |
 | `keys()` | list of keys | `map("a"=1).keys()` | `['a']` |
 | `values()` | list of values | `map("a"=1).values()` | `[1]` |
 | `items()` | list of `[key, value]` pairs | `map("a"=1).items()` | `[['a', 1]]` |
@@ -56,6 +57,9 @@ person = map("name" = "Sara", "age" = 20, "city" = "Tehran")
 
 print(person.has("name"))     # true
 print(person.has("email"))    # false
+
+print(person.get("name", "?"))      # Sara
+print(person.get("email", "none"))  # none  (missing key -> default)
 
 print(person.keys())          # ['name', 'age', 'city']
 print(person.values())        # ['Sara', 20, 'Tehran']

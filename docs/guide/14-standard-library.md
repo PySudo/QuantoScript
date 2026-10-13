@@ -261,15 +261,13 @@ print(env("PATH"))
 
 `load_env` reads a dotenv-style file: blank lines and lines starting with `#`
 are skipped, spaces around the `=` are trimmed, and any `=` inside a value is
-kept. Missing keys throw, so test with `has` first.
+kept. Reading a missing key directly throws, so use `map.get(key, default)`.
 
 ```qscript
 from "stdlib/core.qs" import load_env
 
 cfg = load_env(".env")
-if cfg.has("API_KEY") {
-    print(cfg["API_KEY"])
-}
+print(cfg.get("API_KEY", "not set"))
 ```
 
 ---

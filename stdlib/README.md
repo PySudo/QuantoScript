@@ -115,9 +115,7 @@ from "stdlib/core.qs" import env, load_env
 print(env("PATH"))          # an OS environment variable
 
 cfg = load_env(".env")      # a .env file -> map
-if cfg.has("API_KEY") {
-    print(cfg["API_KEY"])
-}
+print(cfg.get("API_KEY", "not set"))
 ```
 
 ### Process Execution
