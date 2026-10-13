@@ -1400,9 +1400,10 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         if (args->count != 1) { parser_error(parser, "indexOf needs one value"); return 0; }
         char *needle = value_to_string(args->items[0]);
         const char *pos = strstr(out->as.string, needle);
+        long index = pos ? (long)(pos - out->as.string) + 1 : 0;
         free(needle);
         free_value(*out);
-        *out = pos ? make_integer((long)(pos - out->as.string) + 1) : make_integer(0);
+        *out = make_integer(index);
         return 1;
     }
 
@@ -1614,10 +1615,11 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
                     return 0;
                 }
                 if (value_truthy(cond)) {
+                    Value found = clone_value(out->as.list.items[i]);
                     free_value(cond);
                     free_call_args(&call_args);
                     free_value(*out);
-                    *out = clone_value(out->as.list.items[i]);
+                    *out = found;
                     return 1;
                 }
                 free_value(cond);
@@ -1626,8 +1628,9 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         } else {
             for (size_t i = 0; i < out->as.list.count; i++) {
                 if (values_equal(out->as.list.items[i], args->items[0])) {
+                    Value found = clone_value(out->as.list.items[i]);
                     free_value(*out);
-                    *out = clone_value(out->as.list.items[i]);
+                    *out = found;
                     return 1;
                 }
             }
@@ -1649,8 +1652,9 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         char *type_name = args->items[0].as.string;
         for (size_t i = 0; i < out->as.list.count; i++) {
             if (type_matches(type_name, out->as.list.items[i])) {
+                Value found = clone_value(out->as.list.items[i]);
                 free_value(*out);
-                *out = clone_value(out->as.list.items[i]);
+                *out = found;
                 return 1;
             }
         }
