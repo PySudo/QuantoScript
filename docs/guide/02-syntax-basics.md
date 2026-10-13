@@ -116,13 +116,15 @@ counter = 10   # fine
 
 ## String quotes
 
-Strings may use single or double quotes. The opposite quote can appear inside
-without escaping:
+Strings may use single or double quotes, and either quote may appear inside a
+string. A quote only ends the string when it is followed by the end of the line
+or by punctuation:
 
 ```qscript
-single = 'hello'
-double = "world"
-funny  = "i use ' inside this string."
+single   = 'hello'
+double   = "world"
+opposite = "i use ' inside this string."
+same     = "i use " inside this string."
 ```
 
 See [Strings](05-strings.md) for escape sequences, indexing, and methods.

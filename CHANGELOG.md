@@ -11,6 +11,7 @@ All notable changes to QuantoScript will be documented in this file.
 - Map `extend` now merges a map argument into a map receiver instead of raising a syntax error.
 - `repeat key, value -> map` now yields `[key, value]` pairs when iterating over maps.
 - Lambdas with braced multi-statement bodies can now be passed to calls and executed.
+- Strings may now contain the same quote character that delimits them (for example `"i use " inside this string."` or `'i use ' inside this string.'`) on the interpreter, the bytecode VM, and compiled binaries. Previously the first inner matching quote was treated as the closing quote, which raised `unexpected text after expression` in the interpreter. A quote is now treated as the closing quote only when it is followed by the end of the line, a comment, or a token that can continue the expression (`,`, `)`, `]`, `.`, an operator, `in`/`and`/`or`/`import`, ...).
 
 ### Tooling
 - The `Makefile` and `qs compile` now probe for POSIX regex (`<regex.h>`) and link `libregex` only when it is available; CI installs `mingw-w64-*-libsystre` so released Windows binaries include real regex support.

@@ -19,6 +19,10 @@ print(3 * "yo")
 funny = "i use ' inside this string."
 print(funny)
 
+# The same quote can appear inside too.
+same = "i use " inside this string."
+print(same)
+
 # Indexes start at 1.
 word = "Quanto"
 print("first letter:", word[1])

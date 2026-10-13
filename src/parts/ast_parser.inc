@@ -101,7 +101,7 @@ static ASTNode *ast_parse_primary(ASTParser *p) {
                 p->pos += 2;
                 continue;
             }
-            if (p->text[p->pos] == quote) break;
+            if (p->text[p->pos] == quote && quote_can_close(p->text, p->pos, ']')) break;
             p->pos++;
         }
         if (p->text[p->pos] != quote) {

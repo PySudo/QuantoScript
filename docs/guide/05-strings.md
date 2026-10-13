@@ -9,13 +9,15 @@ like the rest of the language's collections.
 
 ## Writing strings
 
-Single and double quotes are equivalent. The opposite quote may appear inside
-without escaping:
+Single and double quotes are equivalent, and either quote may appear inside a
+string. A quote only ends the string when it is followed by the end of the line
+or by punctuation and operators such as `,`, `)`, `]`, `.`, or `+`:
 
 ```qscript
-single = 'hello'
-double = "world"
-funny  = "i use ' inside this string."
+single   = 'hello'
+double   = "world"
+opposite = "i use ' inside this string."
+same     = "i use " inside this string."
 ```
 
 ### Escape sequences
