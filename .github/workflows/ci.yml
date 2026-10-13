@@ -55,9 +55,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          for dll in $(objdump -p build/qs.exe | grep -oE '[^[:space:]]+\.dll'); do
-            if [ -f "/mingw64/bin/$dll" ]; then cp -f "/mingw64/bin/$dll" build/; fi
-          done
+          stage() {
+            for dll in $(objdump -p "$1" | grep -oE '[^[:space:]]+\.dll'); do
+              if [ -f "/mingw64/bin/$dll" ] && [ ! -f "build/$dll" ]; then
+                cp -f "/mingw64/bin/$dll" build/
+                stage "build/$dll"
+              fi
+            done
+          }
+          stage build/qs.exe
           ls -l build/*.dll
 
       - name: Run regression suite (Windows)
