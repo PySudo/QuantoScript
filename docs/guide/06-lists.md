@@ -133,6 +133,24 @@ See [Control Flow](08-control-flow.md) for every iteration form.
 
 ---
 
+## List comprehensions
+
+A comprehension builds a new list from another collection in one line:
+
+```qscript
+nums = [1, 2, 3, 4]
+
+print([x * 2 for x in nums])              # [2, 4, 6, 8]
+print([x for x in nums if x % 2 == 0])    # [2, 4]
+print([c for c in "abc"])                 # ['a', 'b', 'c']
+```
+
+The form is `[expression for item in collection if condition]`; the `if`
+part is optional. The source may be a list, a string (iterated character by
+character), or a map (iterated by key).
+
+---
+
 ## Next steps
 
 Maps are the subject of [Maps](07-maps.md).

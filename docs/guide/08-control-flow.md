@@ -128,6 +128,19 @@ repeat key, value -> person {
 
 ---
 
+## There is no C-style `for`
+
+QuantoScript has no `for (i = 0; i < n; i += 1)` loop. Reach for `repeat`
+(over a `range` or a collection) or `while` instead:
+
+```qscript
+repeat i -> range(3) {
+    print(i)      # 1, 2, 3
+}
+```
+
+---
+
 ## `break` and `continue`
 
 - `break` leaves the innermost loop immediately.

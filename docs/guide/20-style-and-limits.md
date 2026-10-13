@@ -89,7 +89,8 @@ The following features are not implemented in v1.1.1:
 - Inheritance (`extends`, `super`) and interfaces
 - Generics, `match` / `switch`, ternary `? :`
 - String interpolation (`$"..."`)
-- List comprehensions, decorators, structs, enums
+- Decorators, structs, enums
+- C-style `for (i = 0; i < n; i += 1)` loops — use `repeat` or `while`
 - Multiple return values
 - A module system beyond file-based imports
 
