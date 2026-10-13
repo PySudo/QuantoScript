@@ -116,15 +116,20 @@ jobs:
         shell: msys2 {0}
         run: |
           echo "=== Dynamic library dependencies ==="
-          objdump -p build/qs.exe | grep "DLL Name" || true
+          deps=$(objdump -p build/qs.exe | grep -oE '[^[:space:]]+\.dll')
+          echo "$deps"
           echo ""
-          echo "=== Checking for OpenSSL DLLs ==="
-          if objdump -p build/qs.exe | grep -qi 'ssl\|crypto'; then
-            echo "WARNING: binary dynamically links OpenSSL"
+          echo "=== Checking for non-system (MinGW) DLLs ==="
+          # MinGW runtime libraries (libsystre-0, libtre-5, libintl-8, libiconv-2,
+          # libssl, libcrypto, libgcc_s, libwinpthread, ...) all start with "lib".
+          # System DLLs (KERNEL32, api-ms-win-crt-*, ...) do not.
+          unexpected=$(echo "$deps" | grep -iE '^lib' || true)
+          if [ -n "$unexpected" ]; then
+            echo "WARNING: binary links non-system libraries:"
+            echo "$unexpected"
             exit 1
-          else
-            echo "OK: binary is self-contained (no OpenSSL dynamic deps)"
           fi
+          echo "OK: binary is self-contained (no non-system DLL deps)"
 
       # ── Package ──────────────────────────────────────────────────
       - name: Create release archive

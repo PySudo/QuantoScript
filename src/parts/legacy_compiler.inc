@@ -1118,7 +1118,7 @@ static QS_UNUSED_FN int compile_file(const char *input_path, const char *output_
     char command[8192];
 #ifdef _WIN32
 #if QS_HAVE_POSIX_REGEX
-    const char *regex_flag = " -lregex";
+    const char *regex_flag = " -l:libregex.a -l:libtre.a -l:libintl.a -l:libiconv.a";
 #else
     const char *regex_flag = "";
 #endif

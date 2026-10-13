@@ -51,7 +51,14 @@ else
 endif
 
 # ── Platform-specific settings ─────────────────────────────────────
-REGEX_LIB := $(shell echo '\#include <regex.h>' | $(CC) -E -x c - >/dev/null 2>&1 && echo -lregex)
+# POSIX <regex.h> is provided by libc on Linux/macOS, and by libsystre on MinGW.
+# REGEX_LIB is only used by the MinGW branches below; there it links the
+# systre -> tre -> gettext -> iconv archives statically so the Windows binary
+# has no extra DLL dependencies (matching the self-contained release build).
+REGEX_H_AVAILABLE := $(shell echo '\#include <regex.h>' | $(CC) -E -x c - >/dev/null 2>&1 && echo yes)
+ifeq ($(REGEX_H_AVAILABLE),yes)
+REGEX_LIB := -l:libregex.a -l:libtre.a -l:libintl.a -l:libiconv.a
+endif
 
 ifeq ($(UNAME_S),Windows)
   EXE  := .exe
