@@ -364,11 +364,21 @@ if ws == null {
     print("could not connect")
 } else {
     set_timeout(ws, 3000)
+    # echo.websocket.org sends a greeting message as soon as you connect,
+    # so read it first; the next recv returns your own message back.
+    greeting = recv(ws)                 # "Request served by <server-id>"
     send(ws, "Hello from QuantoScript!")
-    print(recv(ws))
+    print(recv(ws))                     # Hello from QuantoScript!
     close(ws)
 }
 ```
+
+> **Server greetings.** Some echo servers send a message immediately after the
+> handshake, before echoing anything. `wss://echo.websocket.org` is one: its first
+> message is `Request served by <server-id>`. If you don't read that greeting
+> first, your first `recv` returns it instead of your echo. Servers such as
+> `wss://ws.postman-echo.com/raw` start echoing right away, so the greeting line
+> can be left out there.
 
 ---
 
