@@ -51,11 +51,19 @@ jobs:
           .\tests\run_regression.ps1 -Verbose
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      - name: Stage runtime DLLs next to qs.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          for dll in $(objdump -p build/qs.exe | grep -oE '[^[:space:]]+\.dll'); do
+            if [ -f "/mingw64/bin/$dll" ]; then cp -f "/mingw64/bin/$dll" build/; fi
+          done
+          ls -l build/*.dll
+
       - name: Run regression suite (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           .\tests\run_regression.ps1 -Verbose
           if ($LASTEXITCODE -ne 0) { exit 1 }
 

@@ -16,7 +16,7 @@ All notable changes to QuantoScript will be documented in this file.
 
 ### Tooling
 - The `Makefile` and `qs compile` now probe for POSIX regex (`<regex.h>`) and link `libregex` only when it is available; CI installs `mingw-w64-*-libsystre` so released Windows binaries include real regex support.
-- Windows CI now puts the MSYS2 `mingw64\bin` directory on `PATH` before running the regression suite, so `qs.exe` can load the `libsystre` and OpenSSL runtime DLLs it links against.
+- Windows CI now copies the MSYS2 runtime DLLs (`libsystre`, OpenSSL) next to `qs.exe` before running the regression suite, so the MinGW binary loads its dependencies without relying on `PATH`.
 
 ## [1.1.0] — 2026-10-13
 
