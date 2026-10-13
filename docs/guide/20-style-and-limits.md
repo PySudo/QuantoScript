@@ -3,7 +3,7 @@
 # 20. Style and Limits
 
 This final chapter collects the conventions that keep QuantoScript code readable
-and the things a v1.1.0 release does *not* do yet.
+and the things a v1.1.1 release does *not* do yet.
 
 ---
 
@@ -55,7 +55,7 @@ MAX_RETRIES = 3
 
 ## Known limitations
 
-These are tracked limitations of the v1.1.0 release:
+These are tracked limitations of the v1.1.1 release:
 
 - **Closures** do not capture outer variables. An inner `fn` that reads an outer
   local does not behave as a closure. Use a named `func` instead. See
@@ -82,7 +82,7 @@ These are tracked limitations of the v1.1.0 release:
 
 ## Not yet supported
 
-The following features are not implemented in v1.1.0:
+The following features are not implemented in v1.1.1:
 
 - `&&` and `||` (use `and` and `or`)
 - Closures with captured variables

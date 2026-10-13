@@ -65,7 +65,7 @@ function.
 
 ## Closures and currying
 
-> **Not supported in v1.1.0.** A lambda cannot capture variables from the scope
+> **Not supported in v1.1.1.** A lambda cannot capture variables from the scope
 > that surrounds it. Attempting to use an outer local inside a lambda does not
 > produce a working closure — the captured name is unavailable. Nested/curried
 > lambdas (`fn(x) -> fn(y) -> ...`) are likewise unsupported.

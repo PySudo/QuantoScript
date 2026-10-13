@@ -4,6 +4,8 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-10-13
+
 ### Bug Fixes
 - WebSocket client now supports secure `wss://` connections (OpenSSL TLS handshake) and connects over IPv6 as well as IPv4; `ws_connect` now reports that it expects a `ws://` or `wss://` URL.
 - `regex_match` / `regex_find` / `regex_replace` now use a real POSIX regular-expression engine on Windows (via the optional `libsystre`/`libregex` package) instead of literal substring matching, falling back to substring matching only where POSIX regex is unavailable. `regex_replace` previously performed a literal substring replacement, and its documented argument order was wrong.
