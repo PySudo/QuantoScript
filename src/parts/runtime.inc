@@ -1,10 +1,3 @@
-// QuantoScript Runtime Path Discovery
-// Finds stdlib, runtime resources, and installation paths.
-// Lookup order:
-//   1. QUANTO_HOME environment variable
-//   2. Executable-relative location
-//   3. Current working directory (development mode)
-
 #ifdef _WIN32
 #include <sys/stat.h>
 #include <io.h>
@@ -37,7 +30,6 @@ static char *qs_get_exe_path(void) {
     char *buf = malloc(size);
     if (!buf) return NULL;
     if (_NSGetExecutablePath(buf, &size) != 0) {
-        // Buffer too small; `size` now holds the required length.
         char *bigger = realloc(buf, size);
         if (!bigger) { free(buf); return NULL; }
         buf = bigger;
@@ -68,27 +60,23 @@ static int qs_dir_exists(const char *path) {
 }
 #endif
 
-// Find the QuantoScript home directory (cached)
 static char *g_quanto_home = NULL;
 
 static const char *get_quanto_home(void) {
     if (g_quanto_home) return g_quanto_home;
 
-    // 1. QUANTO_HOME environment variable
     const char *env_home = getenv("QUANTO_HOME");
     if (env_home && env_home[0]) {
         g_quanto_home = qs_strdup(env_home);
         return g_quanto_home;
     }
 
-    // 2. Executable-relative locations
     char *exe_path = qs_get_exe_path();
     if (exe_path) {
         char *exe_dir = qs_dirname_dup(exe_path);
         free(exe_path);
         char probe[4096];
 
-        // Standard install layout: bin/../share/quantoscript/stdlib/
         snprintf(probe, sizeof(probe), "%s/../share/quantoscript/stdlib", exe_dir);
         if (qs_dir_exists(probe)) {
             snprintf(probe, sizeof(probe), "%s/../share/quantoscript", exe_dir);
@@ -97,7 +85,6 @@ static const char *get_quanto_home(void) {
             return g_quanto_home;
         }
 
-        // Development layout: exe alongside stdlib/
         snprintf(probe, sizeof(probe), "%s/stdlib", exe_dir);
         if (qs_dir_exists(probe)) {
             g_quanto_home = qs_strdup(exe_dir);
@@ -108,7 +95,6 @@ static const char *get_quanto_home(void) {
         free(exe_dir);
     }
 
-    // 3. Current working directory (development mode)
     char cwd[4096];
     if (getcwd(cwd, sizeof(cwd))) {
         char probe[8192];
@@ -123,7 +109,6 @@ static const char *get_quanto_home(void) {
     return g_quanto_home;
 }
 
-// Get the stdlib directory path
 static const char *get_stdlib_dir(void) {
     static char buf[4096];
     const char *home = get_quanto_home();
@@ -135,44 +120,36 @@ static const char *get_stdlib_dir(void) {
     return buf;
 }
 
-// Resolve an import path.
-// Handles: "stdlib/http.qs", relative paths, absolute paths.
 static char *qs_resolve_import(const char *path, const char *base_dir) {
-    // Absolute or explicit relative — use as-is
     if (path[0] == '/' || path[0] == '\\' ||
         (path[0] == '.' && path[1] && (path[1] == '/' || path[1] == '\\'))) {
         return qs_strdup(path);
     }
 
-    char probe[4096];
+    char probe[8192];
 
-    // "stdlib/http.qs" → resolve from QUANTO_HOME/stdlib
     if (strncmp(path, "stdlib/", 7) == 0 || strncmp(path, "stdlib\\", 7) == 0) {
         const char *stdlib = get_stdlib_dir();
         snprintf(probe, sizeof(probe), "%s/%s", stdlib, path + 7);
         if (access(probe, R_OK) == 0) return qs_strdup(probe);
     }
 
-    // Try relative to base directory
     if (base_dir && base_dir[0]) {
         snprintf(probe, sizeof(probe), "%s/%s", base_dir, path);
         if (access(probe, R_OK) == 0) return qs_strdup(probe);
     }
 
-    // Try relative to stdlib
     const char *stdlib = get_stdlib_dir();
     if (stdlib[0]) {
         snprintf(probe, sizeof(probe), "%s/%s", stdlib, path);
         if (access(probe, R_OK) == 0) return qs_strdup(probe);
     }
 
-    // Try relative to QUANTO_HOME
     const char *home = get_quanto_home();
     if (home[0]) {
         snprintf(probe, sizeof(probe), "%s/%s", home, path);
         if (access(probe, R_OK) == 0) return qs_strdup(probe);
     }
 
-    // Return as-is
     return qs_strdup(path);
 }

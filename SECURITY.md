@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-QuantoScript is pre-1.0 software. Security fixes are applied to the latest
-release and the `main` branch only.
+QuantoScript security fixes are applied to the latest release and the `main`
+branch only.
 
 | Version | Supported |
 |---------|-----------|
-| 1.0.x   | ✅        |
-| < 1.0   | ❌        |
+| 1.1.x   | Yes       |
+| < 1.1   | No        |
 
 ## Reporting a vulnerability
 

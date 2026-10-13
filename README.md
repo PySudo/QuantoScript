@@ -7,12 +7,12 @@
 Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter *and* a bytecode VM · an optional native-C compiler.
 
 [![CI](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml/badge.svg)](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
 [![language](https://img.shields.io/badge/written%20in-C99-00599C.svg)](src/quanto.c)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#building-from-source)
 
-[Documentation](DOCS.md) · [Examples](examples/) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+[Documentation](docs/guide/README.md) · [Examples](examples/) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -92,7 +92,7 @@ Then open a new terminal and run `qs --help`.
 
 ```bash
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 1.0.0
+curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 1.1.0
 
 # Custom install prefix (default: ~/.quanto)
 QUANTO_INSTALL="$HOME/.local" curl -fsSL .../install.sh | sh
@@ -108,7 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh
 
 ```powershell
 # Install a specific version
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.0.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.1.0
 
 # Uninstall
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Uninstall
@@ -251,7 +251,7 @@ print(user.keys())          # [name, version]
 | List | `len` · `push` / `append` · `pop` · `contains` · `index` · `remove` |
 | Map | `keys` · `values` · `items` · `has` · `remove` · `len` |
 
-See [DOCS.md](DOCS.md) for the complete language reference.
+See [The QuantoScript Guide](docs/guide/README.md) for the complete language reference.
 
 ---
 
@@ -281,8 +281,8 @@ qs vm --dump-bytecode program.qs    # disassemble for debugging
 ```
 
 The `.qvm` format (**version 4**) includes a magic-header check, version validation,
-CRC32 source checksums, and comprehensive handling of malformed files. See
-[docs/QVM_FORMAT.md](docs/QVM_FORMAT.md) for the full specification.
+and a CRC32 checksum of the source, and it rejects malformed files. See
+[Bytecode and Native Builds](docs/guide/17-bytecode-and-native.md) for details.
 
 ---
 
@@ -360,8 +360,7 @@ print(exists("gcc"))                # true / false
 
 At runtime, stdlib modules are resolved via the `QUANTO_HOME` environment variable.
 Run `qs home` to print the configured location. See
-[docs/LANGUAGE_ARCHITECTURE_AUDIT.md](docs/LANGUAGE_ARCHITECTURE_AUDIT.md) for full
-architecture details.
+[Imports](docs/guide/13-imports.md) for how paths are resolved.
 
 ---
 
@@ -501,7 +500,7 @@ src/                C source (single-file amalgamation)
 stdlib/             Standard library modules (.qs)
 examples/           Example programs (see full_tour.qs)
 tests/              Regression and stress test suite
-docs/               Language & format documentation, audit reports
+docs/guide/         The QuantoScript Guide (language documentation)
 tools/              Benchmarks, CMake helpers, packaging metadata
 scripts/            Build and install scripts
 build/              Build output (gitignored)
@@ -511,7 +510,7 @@ build/              Build output (gitignored)
 
 ## Known Limitations
 
-This is a **v1.0.0** release. The following are known and tracked:
+This is a **v1.1.0** release. The following are known and tracked:
 
 - **Closures** with captured variables do not work — inner functions capturing outer
   locals return `null`.
@@ -519,7 +518,8 @@ This is a **v1.0.0** release. The following are known and tracked:
 - **Return type annotations** are parsed but not yet enforced.
 - **Async/await is not functional.** The `stdlib/async.qs` task queue hangs with two or
   more tasks and can crash non-deterministically under load. Single-task
-  `spawn`/`run`/`result` work. See [docs/ASYNC_VALIDATION.md](docs/ASYNC_VALIDATION.md).
+  `spawn`/`run`/`result` work. See
+  [Standard Library § async](docs/guide/14-standard-library.md#async).
 - The tree-walk parser does not support single-line `try`/`oops` syntax.
 - **Python embedding** requires the `-DQS_PYTHON` build flag and Python headers.
 
@@ -529,8 +529,8 @@ This is a **v1.0.0** release. The following are known and tracked:
 
 | Version | Focus |
 |---------|-------|
-| **v0.2.0** | Working closures, richer string/map methods |
-| **v0.3.0** | Async/await, broader native-compiler coverage |
+| **v1.2.0** | Working closures, richer string/map methods |
+| **v2.0.0** | Async/await, broader native-compiler coverage |
 
 ---
 

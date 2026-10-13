@@ -1,55 +1,53 @@
-// QuantoScript AST Node Definitions
-// Defines the complete abstract syntax tree node types for the bytecode compiler.
-
 typedef enum {
-    // Literals
     AST_INT_LIT, AST_FLOAT_LIT, AST_STR_LIT, AST_BOOL_LIT, AST_NULL_LIT,
-    // Identifier
+
     AST_IDENT,
-    // Unary operations
+
     AST_UNARY_NEG, AST_UNARY_NOT,
-    // Binary operations
+
     AST_BINARY_ADD, AST_BINARY_SUB, AST_BINARY_MUL, AST_BINARY_DIV, AST_BINARY_MOD,
     AST_BINARY_EQ, AST_BINARY_NEQ,
     AST_BINARY_LT, AST_BINARY_GT, AST_BINARY_LTE, AST_BINARY_GTE,
     AST_BINARY_AND, AST_BINARY_OR,
-    // Chained comparison: 0 < x < 5
+    AST_BINARY_IN,
+
     AST_CHAINED_CMP,
-    // Access
-    AST_INDEX,            // obj[key]
-    AST_SLICE,            // obj[start:end]
-    // Calls
-    AST_CALL,             // name(args)
-    AST_METHOD_CALL,      // obj.method(args)
-    // Data structures
-    AST_LIST_LIT,         // [items]
-    AST_MAP_LIT,          // {k: v}
-    // F-strings
-    AST_FSTRING,          // f"text {expr} text"
-    // Lambda
-    AST_LAMBDA,           // fn(params) -> body
-    // Statements
-    AST_ASSIGN,           // name = expr, name += expr, etc.
-    AST_PRINT,            // print(args...)
-    AST_RETURN,           // return expr
+
+    AST_INDEX,
+    AST_SLICE,
+
+    AST_CALL,
+    AST_METHOD_CALL,
+
+    AST_LIST_LIT,
+    AST_MAP_LIT,
+
+    AST_FSTRING,
+
+    AST_LAMBDA,
+
+    AST_ASSIGN,
+    AST_PRINT,
+    AST_RETURN,
     AST_BREAK,
     AST_CONTINUE,
-    AST_IF,               // if / maybe / else chain
-    AST_WHILE,            // while cond { body }
-    AST_REPEAT,           // repeat N { } or repeat item -> coll { }
-    AST_FUNC_DEF,         // fn name(params) { body }
-    AST_TRY,              // try { } oops [var] { }
-    AST_IMPORT,           // import "file" or from "file" import name
-    AST_EXPR_STMT,        // expression as statement
-    AST_BLOCK,            // { statements }
-    AST_PROGRAM,          // top-level list of statements
-    // Class system
-    AST_CLASS_DEF,        // class Name { fields; methods }
-    AST_METHOD_DEF,       // method inside class
-    AST_FIELD_DEF,        // field declaration: name:type
-    AST_NEW,              // ClassName(args)
-    AST_FIELD_ACCESS,     // obj.field
-    AST_FIELD_ASSIGN,     // obj.field = value
+    AST_IF,
+    AST_WHILE,
+    AST_REPEAT,
+    AST_FUNC_DEF,
+    AST_TRY,
+    AST_THROW,
+    AST_IMPORT,
+    AST_EXPR_STMT,
+    AST_BLOCK,
+    AST_PROGRAM,
+
+    AST_CLASS_DEF,
+    AST_METHOD_DEF,
+    AST_FIELD_DEF,
+    AST_NEW,
+    AST_FIELD_ACCESS,
+    AST_FIELD_ASSIGN,
 } ASTNodeType;
 
 typedef struct ASTNode ASTNode;
@@ -63,90 +61,63 @@ struct ASTNode {
         char *string;
         int boolean;
 
-        // Unary: operand
         struct { ASTNode *operand; } unary;
 
-        // Binary: left, right
         struct { ASTNode *left; ASTNode *right; } binary;
 
-        // Chained comparison: a op1 b op2 c
         struct { ASTNode **operands; char **ops; int count; } chained;
 
-        // Call: name(args)
-        struct { char *name; ASTNode **args; int argc; } call;
+        struct { char *name; ASTNode **args; char **arg_names; int argc; } call;
 
-        // Method call: obj.method(args)
         struct { ASTNode *object; char *method; ASTNode **args; int argc; } method_call;
 
-        // Index: obj[key]
         struct { ASTNode *object; ASTNode *key; } index;
 
-        // Slice: obj[start:end]
         struct { ASTNode *object; ASTNode *start; ASTNode *end; } slice;
 
-        // List literal
         struct { ASTNode **items; int count; } list;
 
-        // Map literal
         struct { ASTNode **keys; ASTNode **vals; int count; } map;
 
-        // F-string: alternates text (AST_STR_LIT) and expr nodes
         struct { ASTNode **parts; int count; } fstring;
 
-        // Lambda: fn(params) -> body (body stored as text for call_lambda)
         struct { char **params; char **param_types; int param_count; char *body_text; } lambda;
 
-        // Assignment: name = expr, name += expr, etc.
-        struct { char *name; char op; /* '=', '+', '-', '*', '/', '%' */ ASTNode *value; } assign;
+        struct { char *name; char op;  ASTNode *value; } assign;
 
-        // Print: print(args...)
         struct { ASTNode **args; int argc; } print;
 
-        // If: condition, then, elif chain, else
         struct { ASTNode *cond; ASTNode *then_body; ASTNode *elif_branch; ASTNode *else_body; } if_stmt;
 
-        // While: condition, body
         struct { ASTNode *cond; ASTNode *body; } while_stmt;
 
-        // Repeat: counted (count=N) or iterating (item -> coll)
         struct {
-            int is_counted;     // 1 = repeat N, 0 = repeat item -> coll
-            ASTNode *count_or_coll; // count expression or collection expression
-            char *var_name;     // loop variable (for iterating form)
-            char *index_name;   // optional index variable (for i, item -> coll)
+            int is_counted;
+            ASTNode *count_or_coll;
+            char *var_name;
+            char *index_name;
             ASTNode *body;
         } repeat;
 
-        // Function definition: fn name(params) -> rettype { body }
         struct { char *name; char **params; char **param_types; int param_count; char *return_type; ASTNode *body; char *body_text; } func_def;
 
-        // Try/oops
         struct { ASTNode *try_body; char *err_var; ASTNode *oops_body; } try_stmt;
 
-        // Block / Program
         struct { ASTNode **stmts; int count; int capacity; } block;
 
-        // Class definition: class Name { fields; methods }
         struct { char *name; ASTNode **fields; int field_count; ASTNode **methods; int method_count; } class_def;
 
-        // Method definition (inside class): name(params) -> rettype { body }
         struct { char *name; char **params; char **param_types; int param_count; char *return_type; ASTNode *body; } method_def;
 
-        // Field definition: name:type (inside class)
         struct { char *name; char *type; } field_def;
 
-        // New: ClassName(args)
         struct { char *class_name; ASTNode **args; int argc; } new_expr;
 
-        // Field access: obj.field
         struct { ASTNode *object; char *field; } field_access;
 
-        // Field assign: obj.field = value
         struct { ASTNode *object; char *field; ASTNode *value; } field_assign;
     } as;
 };
-
-// ---- AST Node Constructors ----
 
 static ASTNode *ast_new(ASTNodeType type, int line) {
     ASTNode *n = calloc(1, sizeof(ASTNode));
@@ -206,6 +177,16 @@ static ASTNode *ast_call(char *name, ASTNode **args, int argc, int line) {
     ASTNode *n = ast_new(AST_CALL, line);
     n->as.call.name = name;
     n->as.call.args = args;
+    n->as.call.arg_names = NULL;
+    n->as.call.argc = argc;
+    return n;
+}
+
+static ASTNode *ast_call_named(char *name, ASTNode **args, char **arg_names, int argc, int line) {
+    ASTNode *n = ast_new(AST_CALL, line);
+    n->as.call.name = name;
+    n->as.call.args = args;
+    n->as.call.arg_names = arg_names;
     n->as.call.argc = argc;
     return n;
 }
@@ -263,8 +244,6 @@ static ASTNode *ast_field_assign(ASTNode *object, char *field, ASTNode *value, i
     return n;
 }
 
-// ---- AST Free ----
-
 static void ast_free(ASTNode *n) {
     if (!n) return;
     switch (n->type) {
@@ -273,7 +252,7 @@ static void ast_free(ASTNode *n) {
         case AST_IDENT: case AST_STR_LIT:
             free(n->as.string);
             break;
-        case AST_UNARY_NEG: case AST_UNARY_NOT:
+        case AST_UNARY_NEG: case AST_UNARY_NOT: case AST_THROW:
             ast_free(n->as.unary.operand);
             break;
         case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
@@ -282,6 +261,10 @@ static void ast_free(ASTNode *n) {
         case AST_BINARY_LT: case AST_BINARY_GT:
         case AST_BINARY_LTE: case AST_BINARY_GTE:
         case AST_BINARY_AND: case AST_BINARY_OR:
+            ast_free(n->as.binary.left);
+            ast_free(n->as.binary.right);
+            break;
+        case AST_BINARY_IN:
             ast_free(n->as.binary.left);
             ast_free(n->as.binary.right);
             break;
@@ -304,6 +287,10 @@ static void ast_free(ASTNode *n) {
             free(n->as.call.name);
             for (int i = 0; i < n->as.call.argc; i++) ast_free(n->as.call.args[i]);
             free(n->as.call.args);
+            if (n->as.call.arg_names) {
+                for (int i = 0; i < n->as.call.argc; i++) free(n->as.call.arg_names[i]);
+                free(n->as.call.arg_names);
+            }
             break;
         case AST_METHOD_CALL:
             ast_free(n->as.method_call.object);
@@ -346,7 +333,7 @@ static void ast_free(ASTNode *n) {
             free(n->as.print.args);
             break;
         case AST_RETURN:
-            ast_free(n->as.unary.operand); // reuse unary field for expression
+            ast_free(n->as.unary.operand);
             break;
         case AST_IF:
             ast_free(n->as.if_stmt.cond);
@@ -385,7 +372,7 @@ static void ast_free(ASTNode *n) {
             free(n->as.string);
             break;
         case AST_EXPR_STMT:
-            ast_free(n->as.unary.operand); // reuse for expression
+            ast_free(n->as.unary.operand);
             break;
         case AST_BREAK: case AST_CONTINUE:
             break;

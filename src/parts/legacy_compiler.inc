@@ -1,11 +1,3 @@
-static void compiler_mkdir_build(void) {
-#ifdef _WIN32
-    _mkdir("build");
-#else
-    mkdir("build", 0755);
-#endif
-}
-
 static void write_c_string(FILE *out, const char *text) {
     fputc('"', out);
     for (size_t i = 0; text[i]; i++) {
@@ -1043,32 +1035,54 @@ static int compiler_write_c(const char *generated_path, Program *program, const 
     return 1;
 }
 
-// Find the directory containing quanto.c at runtime.
-// Checks: QS_SOURCE_DIR define, executable-relative paths, cwd-relative paths.
-static void find_runtime_dir(char *buf, size_t bufsz) {
+static int probe_quanto_dir(const char *dir, char *buf, size_t bufsz) {
+    if (!dir || !dir[0]) return 0;
+    char probe[4096];
+    snprintf(probe, sizeof(probe), "%s/quanto.c", dir);
+    FILE *f = fopen(probe, "r");
+    if (!f) return 0;
+    fclose(f);
+    snprintf(buf, bufsz, "%s", dir);
+    return 1;
+}
+
+static int find_runtime_dir(char *buf, size_t bufsz) {
+    char probe[4096];
+
 #ifdef QS_SOURCE_DIR
-    snprintf(buf, bufsz, "%s", QS_SOURCE_DIR);
-    return;
+    if (probe_quanto_dir(QS_SOURCE_DIR, buf, bufsz)) return 1;
 #endif
-    // Try common relative locations from cwd
-    const char *candidates[] = {
-        "src",
-        "../src",
-        "../../src",
-        NULL
-    };
-    for (int i = 0; candidates[i]; i++) {
-        char probe[2048];
-        snprintf(probe, sizeof(probe), "%s/quanto.c", candidates[i]);
-        FILE *f = fopen(probe, "r");
-        if (f) {
-            fclose(f);
-            snprintf(buf, bufsz, "%s", candidates[i]);
-            return;
+
+    const char *env_dir = getenv("QS_SOURCE_DIR");
+    if (probe_quanto_dir(env_dir, buf, bufsz)) return 1;
+
+    char *exe_path = qs_get_exe_path();
+    if (exe_path) {
+        char *exe_dir = qs_dirname_dup(exe_path);
+        free(exe_path);
+        const char *rel[] = { "src", "../src", "../share/quantoscript/src", "share/quantoscript/src" };
+        for (size_t i = 0; i < sizeof(rel) / sizeof(rel[0]); i++) {
+            snprintf(probe, sizeof(probe), "%s/%s", exe_dir, rel[i]);
+            if (probe_quanto_dir(probe, buf, bufsz)) {
+                free(exe_dir);
+                return 1;
+            }
         }
+        free(exe_dir);
     }
-    // Fallback
-    snprintf(buf, bufsz, "src");
+
+    const char *home = get_quanto_home();
+    if (home && home[0]) {
+        snprintf(probe, sizeof(probe), "%s/src", home);
+        if (probe_quanto_dir(probe, buf, bufsz)) return 1;
+    }
+
+    const char *cwd_rel[] = { "src", "../src", "../../src", "../../../src" };
+    for (size_t i = 0; i < sizeof(cwd_rel) / sizeof(cwd_rel[0]); i++) {
+        if (probe_quanto_dir(cwd_rel[i], buf, bufsz)) return 1;
+    }
+
+    return 0;
 }
 
 static QS_UNUSED_FN int compile_file(const char *input_path, const char *output_path) {
@@ -1076,7 +1090,6 @@ static QS_UNUSED_FN int compile_file(const char *input_path, const char *output_
     if (!load_program_file(input_path, &program)) {
         return 1;
     }
-    compiler_mkdir_build();
 
     int *skip = NULL;
     if (!compiler_analyze(&program, &skip)) {
@@ -1092,28 +1105,37 @@ static QS_UNUSED_FN int compile_file(const char *input_path, const char *output_
         return 1;
     }
 
-    char runtime_dir[2048];
-    find_runtime_dir(runtime_dir, sizeof(runtime_dir));
+    char runtime_dir[4096];
+    if (!find_runtime_dir(runtime_dir, sizeof(runtime_dir))) {
+        fprintf(stderr, "QuantoScript: cannot find the C runtime sources (quanto.c and src/parts).\n");
+        fprintf(stderr, "  'qs compile' builds a native binary and needs the C sources plus a C compiler.\n");
+        fprintf(stderr, "  Run it from the project root, or set QS_SOURCE_DIR to the folder that holds quanto.c.\n");
+        free(skip);
+        free_program(&program);
+        return 1;
+    }
 
-    char command[4096];
+    char command[8192];
 #ifdef _WIN32
     snprintf(command, sizeof(command),
-             "gcc -std=c99 -O3 -DNDEBUG -Wall -Wextra -pedantic -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto -lws2_32 -lwinhttp -lwininet",
+             "gcc -std=c99 -O2 -DNDEBUG -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto -lws2_32 -lwinhttp -lwininet",
              runtime_dir, generated_path, output_path);
 #else
     snprintf(command, sizeof(command),
-             "gcc -std=c99 -O3 -DNDEBUG -Wall -Wextra -pedantic -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto",
+             "gcc -std=c99 -O2 -DNDEBUG -I\"%s\" \"%s\" -o \"%s\" -lssl -lcrypto",
              runtime_dir, generated_path, output_path);
 #endif
     int status = system(command);
     if (status != 0) {
         fprintf(stderr, "QuantoScript: native C build failed\n");
         fprintf(stderr, "  runtime dir: %s\n", runtime_dir);
+        fprintf(stderr, "  generated C kept at: %s\n", generated_path);
         free(skip);
         free_program(&program);
         return 1;
     }
 
+    remove(generated_path);
     printf("compiled %s -> %s (compiled-C)\n", input_path, output_path);
     free(skip);
     free_program(&program);

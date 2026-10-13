@@ -1,15 +1,16 @@
 # package_release.ps1 — Generate release archives for QuantoScript.
 #
 # Usage (from project root):
-#   pwsh -File scripts/package_release.ps1 -Version 1.0.0
+#   pwsh -File scripts/package_release.ps1 -Version 1.1.0
 #
 # Produces (inside dist/):
-#   quantoscript-1.0.0-x86_64-pc-windows-gnu.zip        + .sha256
-#   quantoscript-1.0.0-x86_64-unknown-linux-gnu.tar.gz   + .sha256
-#   quantoscript-1.0.0-x86_64-apple-darwin.tar.gz        + .sha256
+#   quantoscript-1.1.0-x86_64-pc-windows-gnu.zip        + .sha256
+#   quantoscript-1.1.0-x86_64-unknown-linux-gnu.tar.gz   + .sha256
+#   quantoscript-1.1.0-x86_64-apple-darwin.tar.gz        + .sha256
 #
 # Each archive contains exactly one top-level directory:
-#   quantoscript-<ver>-<target>/{bin/qs[.exe], stdlib/, examples/, LICENSE, README.md}
+#   quantoscript-<ver>-<target>/{bin/qs[.exe], stdlib/, examples/, src/, LICENSE, README.md}
+# The src/ runtime is bundled so `qs compile` works without a source checkout.
 
 [CmdletBinding()]
 param(
@@ -54,9 +55,10 @@ foreach ($t in $targets) {
         Copy-Item $srcBin (Join-Path $binDir $t.Bin) -Force
     }
 
-    # Copy stdlib, examples, LICENSE, README.md
+    # Copy stdlib, examples, src, LICENSE, README.md
     Copy-Item (Join-Path $Root "stdlib")   (Join-Path $pkgDir "stdlib")   -Recurse -Force
     Copy-Item (Join-Path $Root "examples") (Join-Path $pkgDir "examples") -Recurse -Force
+    Copy-Item (Join-Path $Root "src")      (Join-Path $pkgDir "src")      -Recurse -Force
     Copy-Item (Join-Path $Root "LICENSE")  (Join-Path $pkgDir "LICENSE")  -Force
     Copy-Item (Join-Path $Root "README.md")(Join-Path $pkgDir "README.md") -Force
 

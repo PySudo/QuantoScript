@@ -96,8 +96,6 @@ static int line_is_close_word(const char *line_text, const char *word, size_t *w
     return 1;
 }
 
-// Special version for oops that allows optional variable name: "oops varname {"
-// Check if line starts with oops (without })
 static int line_starts_with_oops(const char *line_text, size_t *after_pos) {
     size_t pos = 0;
     skip_spaces_text(line_text, &pos);
@@ -159,12 +157,10 @@ static int line_has_open_brace(const char *line_text, size_t from, size_t *brace
 static int execute_range(Program *program, Environment *env, size_t start, size_t end, ParseError *err);
 
 static int find_block_end(Program *program, size_t open_line, size_t end, size_t *close_line, ParseError *err) {
-    // First check if the closing } is on the SAME line as the opening {
-    // (handles single-line blocks like class definitions merged by the file loader)
     {
         const char *open_text = program->items[open_line];
         size_t open_len = strlen(open_text);
-        // Find the opening {
+
         size_t brace_pos = 0;
         while (brace_pos < open_len && open_text[brace_pos] != '{') brace_pos++;
         if (brace_pos < open_len) {
@@ -181,7 +177,7 @@ static int find_block_end(Program *program, size_t open_line, size_t end, size_t
             }
         }
     }
-    // Not found on same line — scan subsequent lines
+
     int depth = 1;
     for (size_t i = open_line + 1; i < end; i++) {
         size_t after = 0;
@@ -214,7 +210,7 @@ static int find_block_end(Program *program, size_t open_line, size_t end, size_t
         } else if (line_starts_with_oops(program->items[i], &after) && line_has_open_brace(program->items[i], after, &brace)) {
             depth++;
         }
-        // After a block opener, count } on the same line to adjust depth
+
         if (found_opener) {
             const char *line = program->items[i];
             for (size_t k = 0; line[k]; k++) {
@@ -316,7 +312,7 @@ static int find_arrow(const char *text, size_t start, size_t end, size_t *arrow_
     return 0;
 }
 
-static int parse_function_definition(Program *program, size_t line, size_t close_line, ParseError *err) {
+static int parse_function_definition(Program *program, size_t line, size_t close_line, int force_push, ParseError *err) {
     Environment default_env = {0};
     Parser parser = {program->items[line], 0, (int)line + 1, &default_env, err, -1};
     match_word(&parser, "func");
@@ -417,15 +413,14 @@ static int parse_function_definition(Program *program, size_t line, size_t close
         free(function.name);
         return 0;
     }
-    // Check for single-line body: content after '{' on same line as '}'
+
     if (!rest_is_space_or_comment(program->items[line], brace + 1)) {
         if (close_line != line) {
             set_error(err, (int)line + 1, (int)brace + 2, "nothing can appear after '{'");
             free(function.name);
             return 0;
         }
-        // Single-line body: func f() { return 1 }
-        // Find matching } on this line
+
         const char *lt = program->items[line];
         int bd = 1;
         size_t end_pos = brace + 1;
@@ -434,15 +429,15 @@ static int parse_function_definition(Program *program, size_t line, size_t close
             else if (lt[end_pos] == '}') { bd--; if (bd == 0) break; }
             end_pos++;
         }
-        // end_pos is at the closing } or end of string
+
         function.body_start = line;
         function.body_end = line + 1;
-        // Store the inline body text for later parsing
+
         size_t body_len = end_pos - brace - 1;
         char *body_text = malloc(body_len + 1);
         memcpy(body_text, lt + brace + 1, body_len);
         body_text[body_len] = '\0';
-        // Create a temp program with just this line so execute_range can parse it
+
         Program body_prog = {0};
         body_prog.path = qs_strdup("<func_body>");
         body_prog.dir = qs_strdup(".");
@@ -456,7 +451,7 @@ static int parse_function_definition(Program *program, size_t line, size_t close
         function.is_module = g_module_mode;
         function.body_start = 0;
         function.body_end = body_prog.count;
-        if (g_module_mode) {
+        if (g_module_mode && !force_push) {
             function_push_if_new(function);
         } else {
             function_push(function);
@@ -468,13 +463,135 @@ static int parse_function_definition(Program *program, size_t line, size_t close
     function.body_end = close_line;
     function.program = program;
     function.is_module = g_module_mode;
-    if (g_module_mode) {
-        // During module import, don't overwrite functions from other modules
+    if (g_module_mode && !force_push) {
         function_push_if_new(function);
     } else {
         function_push(function);
     }
     return 1;
+}
+
+static void collect_class_methods(Program *program, size_t class_line, ParseError *err) {
+    char *line_text = program->items[class_line];
+    size_t line_len = strlen(line_text);
+    Parser parser = {line_text, 0, (int)class_line + 1, NULL, err, -1};
+    if (!match_word(&parser, "class")) return;
+    char *class_name = NULL;
+    if (!parse_name(&parser, &class_name)) return;
+
+    while (parser.pos < line_len && line_text[parser.pos] != '{') parser.pos++;
+    if (parser.pos >= line_len) { free(class_name); return; }
+    size_t body_start = parser.pos + 1;
+    size_t body_end = line_len;
+
+    int cdepth = 1;
+    size_t pos = body_start;
+    while (pos < line_len && cdepth > 0) {
+        if (line_text[pos] == '{') cdepth++;
+        else if (line_text[pos] == '}') { cdepth--; if (cdepth == 0) { body_end = pos; break; } }
+        pos++;
+    }
+    pos = body_start;
+    while (pos < body_end) {
+        while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t' || line_text[pos] == '\n' || line_text[pos] == '\r')) pos++;
+        if (pos >= body_end) break;
+        int found_method = 0;
+        if (strncmp(line_text + pos, "func", 4) == 0 && !is_name_part(line_text[pos + 4])) { found_method = 1; pos += 4; }
+        else if (strncmp(line_text + pos, "fn", 2) == 0 && !is_name_part(line_text[pos + 2])) { found_method = 1; pos += 2; }
+        else if (is_name_start(line_text[pos])) {
+            size_t check = pos;
+            while (check < body_end && is_name_part(line_text[check])) check++;
+            if (check < body_end && line_text[check] == '(') found_method = 1;
+        }
+        if (!found_method) { pos++; continue; }
+        while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+        if (pos >= body_end || !is_name_start(line_text[pos])) continue;
+        size_t mname_start = pos;
+        while (pos < body_end && is_name_part(line_text[pos])) pos++;
+        size_t mname_len = pos - mname_start;
+        char *method_name = qs_strndup(line_text + mname_start, mname_len);
+        size_t qlen = strlen(class_name) + 1 + mname_len + 1;
+        char *qname = malloc(qlen);
+        snprintf(qname, qlen, "%s.%s", class_name, method_name);
+        free(method_name);
+
+        Function function = {0};
+        function.name = qname;
+        Param self_param = {0};
+        self_param.name = qs_strdup("self");
+        self_param.type = qs_strdup("any");
+        param_push(&function, self_param);
+
+        while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+        if (pos < body_end && line_text[pos] == '(') {
+            pos++;
+            while (pos < body_end && line_text[pos] != ')') {
+                while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+                if (pos >= body_end || line_text[pos] == ')') break;
+                Param param = {0};
+                if (line_text[pos] == '*') {
+                    pos++;
+                    if (pos < body_end && line_text[pos] == '*') { param.is_kwargs = 1; pos++; }
+                    else param.is_args = 1;
+                }
+                size_t pns = pos;
+                while (pos < body_end && is_name_part(line_text[pos])) pos++;
+                param.name = qs_strndup(line_text + pns, pos - pns);
+                while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+                if (pos < body_end && line_text[pos] == ':') {
+                    pos++;
+                    while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+                    size_t ts = pos;
+                    while (pos < body_end && (is_name_part(line_text[pos]) || line_text[pos] == '|')) pos++;
+                    param.type = qs_strndup(line_text + ts, pos - ts);
+                }
+                param_push(&function, param);
+                while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+                if (pos < body_end && line_text[pos] == ',') { pos++; continue; }
+                break;
+            }
+            if (pos < body_end && line_text[pos] == ')') pos++;
+        }
+        while (pos < body_end && (line_text[pos] == ' ' || line_text[pos] == '\t')) pos++;
+        if (pos + 1 < body_end && line_text[pos] == '-' && line_text[pos + 1] == '>') {
+            pos += 2;
+            while (pos < body_end && line_text[pos] != '{') pos++;
+        }
+        if (pos >= body_end || line_text[pos] != '{') {
+            for (size_t p = 0; p < function.param_count; p++) {
+                free(function.params[p].name);
+                free(function.params[p].type);
+            }
+            free(function.params);
+            free(function.name);
+            continue;
+        }
+        int mdepth = 1;
+        size_t mbs = pos + 1;
+        size_t mbe = mbs;
+        while (mbe < body_end && mdepth > 0) {
+            if (line_text[mbe] == '{') mdepth++;
+            else if (line_text[mbe] == '}') mdepth--;
+            if (mdepth > 0) mbe++;
+        }
+        size_t blen = mbe - mbs;
+        char *body_raw = malloc(blen + 1);
+        if (blen > 0) memcpy(body_raw, line_text + mbs, blen);
+        body_raw[blen] = '\0';
+        Program *method_prog = calloc(1, sizeof(Program));
+        method_prog->path = qs_strdup("<class_method>");
+        method_prog->dir = qs_strdup(".");
+        split_text_to_program(body_raw, method_prog);
+        if (method_prog->count == 0) program_push(method_prog, qs_strdup(""));
+        free(body_raw);
+        function.body_start = 0;
+        function.body_end = method_prog->count;
+        function.program = method_prog;
+        function.is_module = g_module_mode;
+        function_push(function);
+        pos = mbe + 1;
+    }
+    free(class_name);
 }
 
 static int collect_functions(Program *program, ParseError *err) {
@@ -486,16 +603,16 @@ static int collect_functions(Program *program, ParseError *err) {
             if (!find_block_end(program, i, program->count, &close_line, err)) {
                 return 0;
             }
-            if (!parse_function_definition(program, i, close_line, err)) {
+            if (!parse_function_definition(program, i, close_line, 0, err)) {
                 return 0;
             }
             i = close_line;
         } else if (line_starts_with(program->items[i], "class", &after) && line_has_open_brace(program->items[i], after, &brace)) {
-            // Class definitions are processed during execute_range
             size_t close_line = 0;
             if (!find_block_end(program, i, program->count, &close_line, err)) {
                 return 0;
             }
+            collect_class_methods(program, i, err);
             i = close_line;
         }
     }
@@ -555,7 +672,7 @@ static int parse_import_line(Program *program, size_t line, ImportSpec *spec, Pa
     if (!parse_string(&parser, &path_value)) {
         return 0;
     }
-    // Keep the raw path — qs_resolve_import handles base_dir joining
+
     spec->path = qs_strdup(path_value.as.string);
     free_value(path_value);
 
@@ -633,12 +750,8 @@ static int import_from_module(Program *program, Environment *env, size_t line, P
     g_module_mode = 1;
     int result = 0;
 
-    // Save g_functions count — module functions registered during import
-    // will be collected into a module_env, then only requested ones added back.
-    size_t saved_func_count = g_functions.count;
-
     Program loaded = {0};
-    // Resolve import path using runtime discovery (QUANTO_HOME, exec-relative, cwd)
+
     char *resolved_path = qs_resolve_import(spec.path, program ? program->dir : NULL);
     if (!load_program_file(resolved_path, &loaded)) {
         set_error(err, (int)line + 1, 1, "cannot open imported module");
@@ -678,9 +791,8 @@ static int import_from_module(Program *program, Environment *env, size_t line, P
                 free(found);
                 goto import_cleanup;
             }
-            // Always register all functions from the module so that
-            // module-internal calls work (e.g. year() calls localtime()).
-            if (!parse_function_definition(module, i, close_line, err)) {
+
+            if (!parse_function_definition(module, i, close_line, import_wants(&spec, name), err)) {
                 free(name);
                 free(found);
                 goto import_cleanup;

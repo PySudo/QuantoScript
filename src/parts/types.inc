@@ -1,3 +1,7 @@
+#ifndef QS_VERSION
+#define QS_VERSION "1.1.0"
+#endif
+
 typedef enum {
     VALUE_NULL,
     VALUE_INTEGER,
@@ -27,7 +31,6 @@ typedef struct {
     size_t capacity;
 } ValueDict;
 
-// Forward declare for object struct
 typedef struct ObjectData ObjectData;
 
 struct ObjectData {
@@ -50,13 +53,13 @@ struct Value {
             size_t param_count;
             char *body;
             Environment *closure;
-            int is_module;      // 1 = defined in stdlib module, can access sys_* internals
+            int is_module;
         } lambda;
         struct {
             char *name;
         } class_def;
         struct {
-            ObjectData *data;  // heap-allocated, shared by all copies
+            ObjectData *data;
         } object;
     } as;
 };
@@ -72,11 +75,11 @@ typedef struct {
 } Variable;
 
 struct Environment {
-    Variable *items;        // For globals and name-based lookup
+    Variable *items;
     size_t count;
     size_t capacity;
-    Value *slots;           // For local variables (slot-based access)
-    size_t slot_count;      // Number of allocated slots
+    Value *slots;
+    size_t slot_count;
 };
 
 typedef struct {
@@ -104,8 +107,8 @@ typedef struct {
     size_t body_start;
     size_t body_end;
     Program *program;
-    int is_module;      // 1 = defined in stdlib module
-    Environment *module_env;  // module scope for internal calls (NULL = none)
+    int is_module;
+    Environment *module_env;
 } Function;
 
 typedef struct {
@@ -132,10 +135,9 @@ typedef struct {
     int line;
     Environment *env;
     ParseError *err;
-    int var_index;  // index of the variable being mutated (-1 = none)
+    int var_index;
 } Parser;
 
-// Task struct for async/await
 typedef enum {
     TASK_READY,
     TASK_RUNNING,
@@ -174,8 +176,13 @@ static int g_has_return = 0;
 static int g_loop_depth = 0;
 static int g_has_break = 0;
 static int g_has_continue = 0;
-static int g_module_mode = 0;  // 1 = executing stdlib module code, sys_* accessible
+static int g_module_mode = 0;
 static int g_native_access_depth = 0;
+static Environment *g_root_env = NULL;
+static Function *g_current_function = NULL;
+static int g_module_func_depth = 0;
+
+static int g_var_is_global = 0;
 static Value g_return_value;
 static char **g_call_stack = NULL;
 static size_t g_call_stack_count = 0;
@@ -183,7 +190,6 @@ static size_t g_call_stack_capacity = 0;
 static int g_profiling = 0;
 static int g_sandbox_mode = 0;
 static char g_sandbox_path[1024] = {0};
-
 
 #if defined(__GNUC__)
 #define QS_UNUSED_FN __attribute__((unused))

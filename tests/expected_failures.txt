@@ -1,0 +1,45 @@
+# QuantoScript regression suite: expected-failure (negative) tests.
+#
+# Each line is a test file NAME whose *non-zero* exit is the correct behavior.
+#   - expected-fail test exits non-zero  -> XFAIL (counts as pass)
+#   - expected-fail test exits zero      -> XPASS (counts as failure)
+#   - any TIMEOUT or CRASH is always a failure, even for expected-fail tests
+#
+# Lines starting with '#' and blank lines are ignored.
+# The runner matches by base file name, so a name may appear in any directory.
+
+# Invalid-argument / bad-call tests
+test_core_bad.qs
+test_fs_bad.qs
+test_json_bad.qs
+test_log_bad.qs
+test_math_bad.qs
+test_os_bad.qs
+test_random_bad.qs
+test_text_bad.qs
+test_time_bad.qs
+
+# Direct sys_* access is blocked outside of stdlib modules
+test_core_sys.qs
+test_fs_sys.qs
+test_json_sys.qs
+test_log_sys.qs
+test_math_sys.qs
+test_os_sys.qs
+test_random_sys.qs
+test_text_sys.qs
+test_time_sys.qs
+test_sys_after_import.qs
+test_sys_call.qs
+test_sys_direct.qs
+test_sys_random_int.qs
+test_sys_random_int2.qs
+
+# Type-annotation violations
+test_type_bool_bad.qs
+test_type_bool_bad2.qs
+test_type_int_bad.qs
+test_type_list_bad.qs
+test_type_map_bad.qs
+test_type_null_bad.qs
+test_type_string_bad.qs

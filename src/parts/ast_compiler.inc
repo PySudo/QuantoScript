@@ -1,8 +1,3 @@
-// QuantoScript AST-to-Bytecode Compiler
-// Walks AST nodes and emits bytecode instructions. Never evaluates.
-
-// ---- Local Variable Tracking ----
-// Tracks which variables are local (slot-indexed) vs global (name-indexed)
 #define MAX_LOCAL_VARS 256
 typedef struct {
     char *name;
@@ -25,7 +20,7 @@ static int locals_find(const char *name) {
             return g_local_vars[i].slot;
         }
     }
-    return -1; // Not found — must be global
+    return -1;
 }
 
 static int locals_add(const char *name) {
@@ -36,12 +31,10 @@ static int locals_add(const char *name) {
     return slot;
 }
 
-// Function symbol table — built from AST_FUNC_DEF nodes before compilation
 #define MAX_USER_FUNCS 256
 static char *g_user_func_names[MAX_USER_FUNCS];
 static int g_user_func_count = 0;
 
-// Class symbol table — built from AST_CLASS_DEF nodes before compilation
 #define MAX_USER_CLASSES 256
 static char *g_user_class_names[MAX_USER_CLASSES];
 static int g_user_class_count = 0;
@@ -75,7 +68,6 @@ static int user_class_table_has(const char *name) {
     return 0;
 }
 
-// Scan AST for function definitions and populate the symbol table
 static void user_func_table_collect(ASTNode *node) {
     if (!node) return;
     switch (node->type) {
@@ -106,7 +98,6 @@ static void user_func_table_collect(ASTNode *node) {
     }
 }
 
-// Break/Continue tracking for nested loops
 static int g_bc_loop_start = -1;
 static int g_bc_loop_exit = -1;
 static int g_bc_break_jumps[256];
@@ -117,9 +108,6 @@ static int g_bc_continue_count = 0;
 static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog);
 static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog);
 static void astc_compile_block(ASTNode *block, BytecodeProgram *prog);
-
-// ---- Expression Compiler ----
-// Leaves exactly 1 value on the stack.
 
 static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
     if (!node) {
@@ -156,22 +144,19 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
         case AST_IDENT: {
             int slot = locals_find(node->as.string);
             if (slot >= 0) {
-                // Local variable — O(1) slot access
                 emit(prog, OP_LOAD_LOCAL, make_null(), slot, node->line);
             } else {
-                // Global variable — name-based lookup
                 emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(node->as.string)), 0, node->line);
             }
             break;
         }
 
-        // Binary operations
         case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
         case AST_BINARY_DIV: case AST_BINARY_MOD:
         case AST_BINARY_EQ: case AST_BINARY_NEQ:
         case AST_BINARY_LT: case AST_BINARY_GT:
         case AST_BINARY_LTE: case AST_BINARY_GTE:
-        case AST_BINARY_AND: case AST_BINARY_OR: {
+        case AST_BINARY_AND: case AST_BINARY_OR: case AST_BINARY_IN: {
             astc_compile_expr(node->as.binary.left, prog);
             astc_compile_expr(node->as.binary.right, prog);
 
@@ -190,14 +175,11 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
                 case AST_BINARY_GTE: op = OP_GREATER_EQUAL; break;
                 case AST_BINARY_AND: op = OP_AND; break;
                 case AST_BINARY_OR: op = OP_OR; break;
+                case AST_BINARY_IN: op = OP_IN; break;
                 default: op = OP_ADD; break;
             }
 
-            // Short-circuit for AND/OR
             if (node->type == AST_BINARY_AND) {
-                // left is already compiled. We need: if left is false, skip right.
-                // But we already compiled both. Fix: compile left, DUP, JUMP_IF_FALSE skip, pop dup, compile right, patch.
-                // This requires restructuring. For simplicity, just emit AND (non-short-circuit).
                 emit(prog, op, make_null(), 0, node->line);
             } else if (node->type == AST_BINARY_OR) {
                 emit(prog, op, make_null(), 0, node->line);
@@ -219,39 +201,29 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_CHAINED_CMP: {
-            // a < b < c -> (a < b) and (b < c)
             int count = node->as.chained.count;
             char **ops = node->as.chained.ops;
             ASTNode **operands = node->as.chained.operands;
 
-            // Compile first comparison
             astc_compile_expr(operands[0], prog);
-            for (int i = 0; i < count - 1; i++) {
-                astc_compile_expr(operands[i + 1], prog);
-                Opcode cmp_op;
-                if (strcmp(ops[i], "<") == 0) cmp_op = OP_LESS;
-                else if (strcmp(ops[i], ">") == 0) cmp_op = OP_GREATER;
-                else if (strcmp(ops[i], "<=") == 0) cmp_op = OP_LESS_EQUAL;
-                else cmp_op = OP_GREATER_EQUAL;
-                emit(prog, cmp_op, make_null(), 0, node->line);
+            astc_compile_expr(operands[1], prog);
+            Opcode cmp_op;
+            if (strcmp(ops[0], "<") == 0) cmp_op = OP_LESS;
+            else if (strcmp(ops[0], ">") == 0) cmp_op = OP_GREATER;
+            else if (strcmp(ops[0], "<=") == 0) cmp_op = OP_LESS_EQUAL;
+            else cmp_op = OP_GREATER_EQUAL;
+            emit(prog, cmp_op, make_null(), 0, node->line);
 
-                if (i < count - 2) {
-                    // Need to AND with next comparison
-                    // Save current result, compile next comparison, AND
-                    emit(prog, OP_DUP, make_null(), 0, node->line);
-                    // Compile next comparison
-                    astc_compile_expr(operands[i + 1], prog);
-                    astc_compile_expr(operands[i + 2], prog);
-                    Opcode cmp_op2;
-                    if (strcmp(ops[i + 1], "<") == 0) cmp_op2 = OP_LESS;
-                    else if (strcmp(ops[i + 1], ">") == 0) cmp_op2 = OP_GREATER;
-                    else if (strcmp(ops[i + 1], "<=") == 0) cmp_op2 = OP_LESS_EQUAL;
-                    else cmp_op2 = OP_GREATER_EQUAL;
-                    emit(prog, cmp_op2, make_null(), 0, node->line);
-                    emit(prog, OP_AND, make_null(), 0, node->line);
-                    // Skip the next iteration since we already compiled it
-                    i++;
-                }
+            for (int i = 1; i < count - 1; i++) {
+                astc_compile_expr(operands[i], prog);
+                astc_compile_expr(operands[i + 1], prog);
+                Opcode cmp_op2;
+                if (strcmp(ops[i], "<") == 0) cmp_op2 = OP_LESS;
+                else if (strcmp(ops[i], ">") == 0) cmp_op2 = OP_GREATER;
+                else if (strcmp(ops[i], "<=") == 0) cmp_op2 = OP_LESS_EQUAL;
+                else cmp_op2 = OP_GREATER_EQUAL;
+                emit(prog, cmp_op2, make_null(), 0, node->line);
+                emit(prog, OP_AND, make_null(), 0, node->line);
             }
             break;
         }
@@ -264,10 +236,6 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_SLICE: {
-            // Delegate to tree-walk via EVAL_STMT not feasible for slices
-            // For MVP: compile obj, load start/end as constants, emit OP_SLICE (if available)
-            // Otherwise delegate via a call to apply_method-like behavior
-            // For now, emit a simple approach: compile obj, then call slice method
             astc_compile_expr(node->as.slice.object, prog);
             if (node->as.slice.start) astc_compile_expr(node->as.slice.start, prog);
             else { int idx = add_constant(prog, make_integer(0)); emit(prog, OP_LOAD_CONST, make_null(), idx, node->line); }
@@ -303,20 +271,34 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_CALL: {
-            if (user_class_table_has(node->as.call.name)) {
-                // Class instantiation: args in forward order, then OP_NEW
+            int has_kw = 0;
+            if (node->as.call.arg_names) {
+                for (int i = 0; i < node->as.call.argc; i++)
+                    if (node->as.call.arg_names[i]) { has_kw = 1; break; }
+            }
+            if (has_kw && !user_class_table_has(node->as.call.name)) {
+                for (int i = 0; i < node->as.call.argc; i++) {
+                    if (node->as.call.arg_names[i]) {
+                        int nidx = add_constant(prog, make_string_owned(qs_strdup(node->as.call.arg_names[i])));
+                        emit(prog, OP_LOAD_CONST, make_null(), nidx, node->line);
+                    } else {
+                        int nidx = add_constant(prog, make_null());
+                        emit(prog, OP_LOAD_CONST, make_null(), nidx, node->line);
+                    }
+                    astc_compile_expr(node->as.call.args[i], prog);
+                }
+                emit(prog, OP_CALL_KW, make_string_owned(qs_strdup(node->as.call.name)), node->as.call.argc, node->line);
+            } else if (user_class_table_has(node->as.call.name)) {
                 for (int i = 0; i < node->as.call.argc; i++) {
                     astc_compile_expr(node->as.call.args[i], prog);
                 }
                 emit(prog, OP_NEW, make_string_owned(qs_strdup(node->as.call.name)), node->as.call.argc, node->line);
             } else if (user_func_table_has(node->as.call.name)) {
-                // User-defined function: args in forward order, then call
                 for (int i = 0; i < node->as.call.argc; i++) {
                     astc_compile_expr(node->as.call.args[i], prog);
                 }
                 emit(prog, OP_CALL_USER_FUNC, make_string_owned(qs_strdup(node->as.call.name)), node->as.call.argc, node->line);
             } else {
-                // Built-in: args in forward order, then call
                 for (int i = 0; i < node->as.call.argc; i++) {
                     astc_compile_expr(node->as.call.args[i], prog);
                 }
@@ -335,7 +317,6 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_LAMBDA: {
-            // Create a lambda value and push it
             Value func;
             func.type = VALUE_LAMBDA;
             func.as.lambda.body = qs_strdup(node->as.lambda.body_text);
@@ -343,6 +324,7 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
             func.as.lambda.param_types = NULL;
             func.as.lambda.param_count = node->as.lambda.param_count;
             func.as.lambda.closure = NULL;
+            func.as.lambda.is_module = 0;
             if (node->as.lambda.param_count > 0) {
                 func.as.lambda.param_names = malloc(node->as.lambda.param_count * sizeof(char *));
                 func.as.lambda.param_types = calloc(node->as.lambda.param_count, sizeof(char *));
@@ -363,8 +345,6 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
     }
 }
 
-// ---- Statement Compiler ----
-
 static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
     if (!node) return;
 
@@ -372,7 +352,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         case AST_ASSIGN: {
             int slot = locals_find(node->as.assign.name);
             if (slot >= 0) {
-                // Local variable — slot-based access
                 if (node->as.assign.op != '=') {
                     emit(prog, OP_LOAD_LOCAL, make_null(), slot, node->line);
                 }
@@ -391,7 +370,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
                 }
                 emit(prog, OP_STORE_LOCAL, make_null(), slot, node->line);
             } else {
-                // Global variable — name-based access
                 if (node->as.assign.op != '=') {
                     emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(node->as.assign.name)), 0, node->line);
                 }
@@ -436,6 +414,17 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             break;
         }
 
+        case AST_THROW: {
+            if (node->as.unary.operand) {
+                astc_compile_expr(node->as.unary.operand, prog);
+            } else {
+                int idx = add_constant(prog, make_null());
+                emit(prog, OP_LOAD_CONST, make_null(), idx, node->line);
+            }
+            emit(prog, OP_THROW, make_null(), 0, node->line);
+            break;
+        }
+
         case AST_BREAK: {
             if (g_bc_loop_exit >= 0) {
                 g_bc_break_jumps[g_bc_break_count++] = prog->count;
@@ -458,7 +447,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             int end_jumps[64];
             int ej_count = 0;
 
-            // Init flag = false
             emit(prog, OP_LOAD_CONST, make_null(), add_constant(prog, make_bool(0)), node->line);
             emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(flag_name)), 0, node->line);
 
@@ -466,7 +454,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
                 if (cur->type != AST_IF) break;
 
                 if (cur != node) {
-                    // maybe: skip if flag is true
                     emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(flag_name)), 0, cur->line);
                     end_jumps[ej_count++] = prog->count;
                     emit(prog, OP_JUMP_IF_TRUE, make_null(), 0, cur->line);
@@ -478,20 +465,16 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
 
                 astc_compile_block(cur->as.if_stmt.then_body, prog);
 
-                // set flag = true
                 emit(prog, OP_LOAD_CONST, make_null(), add_constant(prog, make_bool(1)), cur->line);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(flag_name)), 0, cur->line);
 
-                // jump to end
                 end_jumps[ej_count++] = prog->count;
                 emit(prog, OP_JUMP, make_null(), 0, cur->line);
 
-                // patch false jump to next branch
                 prog->instructions[jf].arg_i = prog->count;
 
                 if (cur->as.if_stmt.elif_branch) cur = cur->as.if_stmt.elif_branch;
                 else if (cur->as.if_stmt.else_body) {
-                    // else: skip if flag is true
                     emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(flag_name)), 0, cur->line);
                     end_jumps[ej_count++] = prog->count;
                     emit(prog, OP_JUMP_IF_TRUE, make_null(), 0, cur->line);
@@ -500,7 +483,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
                 } else break;
             }
 
-            // patch all end jumps
             for (int j = 0; j < ej_count; j++)
                 prog->instructions[end_jumps[j]].arg_i = prog->count;
 
@@ -514,7 +496,7 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             int saved_ls = g_bc_loop_start, saved_le = g_bc_loop_exit;
             int saved_bc = g_bc_break_count, saved_cc = g_bc_continue_count;
             g_bc_loop_start = loop_start;
-            g_bc_loop_exit = 0; // will be patched
+            g_bc_loop_exit = 0;
             g_bc_break_count = 0;
             g_bc_continue_count = 0;
 
@@ -524,16 +506,13 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
 
             astc_compile_block(node->as.while_stmt.body, prog);
 
-            // Patch continue jumps to here
             for (int j = 0; j < g_bc_continue_count; j++)
                 prog->instructions[g_bc_continue_jumps[j]].arg_i = prog->count;
 
             emit(prog, OP_JUMP, make_null(), loop_start, node->line);
 
-            // Patch false jump
             prog->instructions[jump_false].arg_i = prog->count;
 
-            // Patch break jumps
             for (int j = 0; j < g_bc_break_count; j++)
                 prog->instructions[g_bc_break_jumps[j]].arg_i = prog->count;
 
@@ -545,34 +524,28 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_REPEAT: {
-            // Desugar repeat into while loop with counter
             char *counter_name = qs_strdup("_rpt_i");
             char *len_name = qs_strdup("_rpt_n");
             char *coll_name = qs_strdup("_rpt_c");
 
             if (node->as.repeat.is_counted) {
-                // repeat N { body } -> _rpt_n = N; _rpt_i = 0; while _rpt_i < _rpt_n { body; _rpt_i += 1 }
                 astc_compile_expr(node->as.repeat.count_or_coll, prog);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(len_name)), 0, node->line);
             } else {
-                // repeat item -> coll { body }
-                // Store collection, get its length
                 astc_compile_expr(node->as.repeat.count_or_coll, prog);
+                emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup("_iter_items")), 1, node->line);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
                 emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
                 emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup("len")), 1, node->line);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(len_name)), 0, node->line);
             }
 
-            // Init counter (1-based for interpreter compatibility)
             int one_idx = add_constant(prog, make_integer(1));
             emit(prog, OP_LOAD_CONST, make_null(), one_idx, node->line);
             emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
 
-            // Loop start
             int loop_start = prog->count;
 
-            // Check counter <= len (1-based counter)
             emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
             emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(len_name)), 0, node->line);
             emit(prog, OP_LESS_EQUAL, make_null(), 0, node->line);
@@ -580,20 +553,14 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             int jump_false = prog->count;
             emit(prog, OP_JUMP_IF_FALSE, make_null(), 0, node->line);
 
-            // Set loop variable if iterating
             if (!node->as.repeat.is_counted && node->as.repeat.var_name) {
                 emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(coll_name)), 0, node->line);
                 emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
                 emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
                 emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.repeat.var_name)), 0, node->line);
 
-                // Set index variable if present
                 if (node->as.repeat.index_name) {
                     emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
-                    // Convert 0-based counter to 1-based for interpreter compatibility
-                    int one_idx2 = add_constant(prog, make_integer(1));
-                    emit(prog, OP_LOAD_CONST, make_null(), one_idx2, node->line);
-                    emit(prog, OP_ADD, make_null(), 0, node->line);
                     emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.repeat.index_name)), 0, node->line);
                 }
             }
@@ -610,7 +577,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             for (int j = 0; j < g_bc_continue_count; j++)
                 prog->instructions[g_bc_continue_jumps[j]].arg_i = prog->count;
 
-            // Increment counter
             emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(counter_name)), 0, node->line);
             int incr_one = add_constant(prog, make_integer(1));
             emit(prog, OP_LOAD_CONST, make_null(), incr_one, node->line);
@@ -636,18 +602,15 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_FUNC_DEF: {
-            // Compile function body to a separate bytecode program
             BytecodeProgram body_prog;
             bytecode_init(&body_prog);
 
-            // Save and reset loop tracking and local variables
             int saved_ls = g_bc_loop_start, saved_le = g_bc_loop_exit;
             int saved_bc = g_bc_break_count, saved_cc = g_bc_continue_count;
             int saved_local_count = g_local_count, saved_next_slot = g_next_slot;
             g_bc_loop_start = g_bc_loop_exit = -1;
             g_bc_break_count = g_bc_continue_count = 0;
 
-            // Register function parameters as local variables
             locals_init();
             for (int i = 0; i < node->as.func_def.param_count; i++) {
                 locals_add(node->as.func_def.params[i]);
@@ -662,12 +625,10 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             g_bc_break_count = saved_bc; g_bc_continue_count = saved_cc;
             g_local_count = saved_local_count; g_next_slot = saved_next_slot;
 
-            // Store compiled body in global lookup table with param info
             compiled_funcs_add(node->as.func_def.name, body_prog,
                               node->as.func_def.params, node->as.func_def.param_count,
                               func_slot_count);
 
-            // Emit a no-op placeholder constant (name is stored in the global table)
             Value placeholder = make_null();
             int idx = add_constant(prog, placeholder);
             emit(prog, OP_LOAD_CONST, make_null(), idx, node->line);
@@ -676,7 +637,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_CLASS_DEF: {
-            // Register each method as a separate compiled function
             for (int m = 0; m < node->as.class_def.method_count; m++) {
                 ASTNode *method = node->as.class_def.methods[m];
                 char method_name[256];
@@ -693,7 +653,7 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
                 g_bc_break_count = g_bc_continue_count = 0;
 
                 locals_init();
-                locals_add("self"); // first parameter is always self
+                locals_add("self");
                 for (int p = 0; p < method->as.method_def.param_count; p++) {
                     locals_add(method->as.method_def.params[p]);
                 }
@@ -714,7 +674,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
                                    slot_count);
             }
 
-            // Store class name as a variable (the class definition itself)
             Value class_val = make_class(node->as.class_def.name);
             int cidx = add_constant(prog, class_val);
             emit(prog, OP_LOAD_CONST, make_null(), cidx, node->line);
@@ -723,8 +682,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_FIELD_ASSIGN: {
-            // obj.field = value
-            // Emit: obj, value, OP_SET_FIELD (field name in instruction arg)
             astc_compile_expr(node->as.field_assign.object, prog);
             astc_compile_expr(node->as.field_assign.value, prog);
             emit(prog, OP_SET_FIELD, make_string_owned(qs_strdup(node->as.field_assign.field)), 0, node->line);
@@ -732,30 +689,24 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_TRY: {
-            // Emit OP_TRY_PUSH with target patched to oops start
             int try_push_idx = prog->count;
             emit(prog, OP_TRY_PUSH, make_null(), 0, node->line);
 
-            // Compile try body
             astc_compile_block(node->as.try_stmt.try_body, prog);
 
             if (node->as.try_stmt.oops_body) {
-                // Normal exit: jump past oops, then OP_CATCH_END
                 int jump_past = prog->count;
                 emit(prog, OP_JUMP, make_null(), 0, node->line);
 
-                // Oops body starts here
                 int oops_start = prog->count;
                 prog->instructions[try_push_idx].arg_i = oops_start;
 
-                // Store error variable if present (error string is on stack from exception)
                 if (node->as.try_stmt.err_var) {
                     emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.try_stmt.err_var)), 0, node->line);
                 }
 
                 astc_compile_block(node->as.try_stmt.oops_body, prog);
 
-                // Patch normal-exit jump
                 prog->instructions[jump_past].arg_i = prog->count;
 
                 emit(prog, OP_CATCH_END, make_null(), 0, node->line);
@@ -766,14 +717,36 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_IMPORT: {
-            // Delegate to tree-walk interpreter
             int idx = add_constant(prog, make_string_owned(qs_strdup(node->as.string)));
             emit(prog, OP_EVAL_STMT, make_null(), idx, node->line);
             break;
         }
 
         case AST_EXPR_STMT: {
-            astc_compile_expr(node->as.unary.operand, prog);
+            ASTNode *e = node->as.unary.operand;
+
+            if (e && e->type == AST_METHOD_CALL &&
+                e->as.method_call.object && e->as.method_call.object->type == AST_IDENT) {
+                const char *m = e->as.method_call.method;
+                int mutates = (strcmp(m, "append") == 0 || strcmp(m, "push") == 0 ||
+                               strcmp(m, "pop") == 0 || strcmp(m, "remove") == 0 ||
+                               strcmp(m, "extend") == 0 || strcmp(m, "sort") == 0 ||
+                               strcmp(m, "insert") == 0 || strcmp(m, "clear") == 0 ||
+                               strcmp(m, "shuffle") == 0 || strcmp(m, "reverse") == 0 ||
+                               strcmp(m, "fill") == 0 || strcmp(m, "splice") == 0);
+                if (mutates) {
+                    const char *vname = e->as.method_call.object->as.string;
+                    astc_compile_expr(e, prog);
+                    int slot = locals_find(vname);
+                    if (slot >= 0) {
+                        emit(prog, OP_STORE_LOCAL, make_null(), slot, node->line);
+                    } else {
+                        emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(vname)), 0, node->line);
+                    }
+                    break;
+                }
+            }
+            astc_compile_expr(e, prog);
             emit(prog, OP_POP, make_null(), 0, node->line);
             break;
         }

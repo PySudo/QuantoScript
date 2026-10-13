@@ -264,6 +264,7 @@ static int parse_fstring(Parser *parser, Value *out) {
             result[len] = '\0';
             free(expr_str);
             free_value(expr_val);
+            continue;
         } else if (parser->text[parser->pos] == '\\' && parser->text[parser->pos + 1] == '{') {
             parser->pos++;
             if (len + 2 >= cap) { cap *= 2; result = realloc(result, cap); }
@@ -287,13 +288,11 @@ static int call_lambda(Parser *parser, Value *lambda, CallArgList *args, Value *
 static int eval_expression_text(Environment *env, const char *text, size_t len, int line, Value *out, ParseError *err);
 
 static int parse_lambda(Parser *parser, Value *out) {
-    // Consume '('
     if (!match_char(parser, '(')) {
         parser_error(parser, "fn needs '('");
         return 0;
     }
 
-    // Parse parameter list
     char **param_names = NULL;
     char **param_types = NULL;
     size_t param_count = 0;
@@ -310,20 +309,17 @@ static int parse_lambda(Parser *parser, Value *out) {
             skip_spaces(parser);
         }
 
-        // Parse param name
         char *pname;
         if (!parse_name(parser, &pname)) {
             goto lambda_fail;
         }
 
-        // Check for optional type hint
         char *ptype = NULL;
         skip_spaces(parser);
         if (parser->text[parser->pos] == ':') {
             parser->pos++;
             skip_spaces(parser);
 
-            // Parse type: could be "int", "string", "int|string", etc.
             size_t type_cap = 0;
             size_t type_len = 0;
             char *type_buf = NULL;
@@ -367,7 +363,6 @@ static int parse_lambda(Parser *parser, Value *out) {
             has_types = 1;
         }
 
-        // Grow arrays
         if (param_count >= param_capacity) {
             param_capacity = param_capacity ? param_capacity * 2 : 4;
             char **next_names = realloc(param_names, param_capacity * sizeof(char *));
@@ -386,13 +381,11 @@ static int parse_lambda(Parser *parser, Value *out) {
         skip_spaces(parser);
     }
 
-    // Consume ')'
     if (!match_char(parser, ')')) {
         parser_error(parser, "fn needs ')'");
         goto lambda_fail;
     }
 
-    // Consume '->'
     skip_spaces(parser);
     if (!match_op(parser, "->")) {
         parser_error(parser, "fn needs '->'");
@@ -400,7 +393,6 @@ static int parse_lambda(Parser *parser, Value *out) {
     }
     skip_spaces(parser);
 
-    // Capture body text: everything until expression boundary
     size_t body_start = parser->pos;
     int depth = 0;
     while (parser->text[parser->pos]) {
@@ -412,9 +404,8 @@ static int parse_lambda(Parser *parser, Value *out) {
         }
         else if (ch == ',' && depth == 0) break;
         else if (ch == '#' && depth == 0) break;
-        // Stop at keywords that start new statements
+
         else if (depth == 0 && is_name_start(ch)) {
-            // Check for keywords that end the expression
             if (strncmp(parser->text + parser->pos, "else", 4) == 0 && !is_name_part(parser->text[parser->pos + 4])) break;
             if (strncmp(parser->text + parser->pos, "maybe", 5) == 0 && !is_name_part(parser->text[parser->pos + 5])) break;
             if (strncmp(parser->text + parser->pos, "and", 3) == 0 && !is_name_part(parser->text[parser->pos + 3])) break;
@@ -426,11 +417,12 @@ static int parse_lambda(Parser *parser, Value *out) {
 
     char *body = qs_strndup(parser->text + body_start, parser->pos - body_start);
 
-    // Capture closure environment
     Environment *closure = malloc(sizeof(Environment));
     closure->count = parser->env->count;
     closure->capacity = parser->env->count;
     closure->items = calloc(closure->count, sizeof(Variable));
+    closure->slots = NULL;
+    closure->slot_count = 0;
     for (size_t i = 0; i < closure->count; i++) {
         closure->items[i].name = qs_strdup(parser->env->items[i].name);
         closure->items[i].value = clone_value(parser->env->items[i].value);
@@ -461,8 +453,6 @@ static int parse_primary(Parser *parser, Value *out) {
         return parse_string(parser, out);
     }
     if (ch == '[') {
-        // Check for list comprehension: [expr for var in collection if cond]
-        // Scan forward to see if 'for' keyword exists before ']'
         size_t scan = parser->pos + 1;
         int in_string = 0;
         char str_quote = '\0';
@@ -492,17 +482,13 @@ static int parse_primary(Parser *parser, Value *out) {
         }
 
         if (found_for) {
-            // Parse comprehension
-            // Extract expression text (everything before 'for')
             size_t body_start = parser->pos + 1;
             size_t for_pos = scan;
             char *expr_text = qs_strndup(parser->text + body_start, for_pos - body_start);
 
-            // Skip 'for'
             parser->pos = for_pos + 3;
             skip_spaces(parser);
 
-            // Parse loop variable
             char *var_name;
             if (!parse_name(parser, &var_name)) {
                 free(expr_text);
@@ -510,7 +496,6 @@ static int parse_primary(Parser *parser, Value *out) {
                 return 0;
             }
 
-            // Skip 'in'
             skip_spaces(parser);
             if (!match_word(parser, "in")) {
                 free(expr_text);
@@ -519,7 +504,6 @@ static int parse_primary(Parser *parser, Value *out) {
                 return 0;
             }
 
-            // Parse collection
             Value collection;
             if (!parse_expression(parser, &collection)) {
                 free(expr_text);
@@ -527,7 +511,6 @@ static int parse_primary(Parser *parser, Value *out) {
                 return 0;
             }
 
-            // Check for optional 'if' filter
             char *filter_text = NULL;
             skip_spaces(parser);
             if (match_word(parser, "if")) {
@@ -541,7 +524,6 @@ static int parse_primary(Parser *parser, Value *out) {
                 filter_text = qs_strndup(parser->text + filter_start, parser->pos - filter_start);
             }
 
-            // Expect ']'
             skip_spaces(parser);
             if (!match_char(parser, ']')) {
                 free(expr_text);
@@ -552,7 +534,6 @@ static int parse_primary(Parser *parser, Value *out) {
                 return 0;
             }
 
-            // Execute comprehension
             ValueList result = {0};
             size_t coll_len = 0;
             if (collection.type == VALUE_STRING) coll_len = strlen(collection.as.string);
@@ -603,7 +584,6 @@ static int parse_primary(Parser *parser, Value *out) {
             return 1;
         }
 
-        // Not a comprehension, parse as regular list
         return parse_list(parser, out);
     }
     if (ch == '{') {
@@ -746,6 +726,15 @@ static int parse_primary(Parser *parser, Value *out) {
             return 1;
         }
 
+        if (parser->text[parser->pos] != '(') {
+            const char *canon = qs_type_alias(name);
+            if (canon) {
+                *out = make_string_owned(qs_strdup(canon));
+                free(name);
+                return 1;
+            }
+        }
+
         if (parser->text[parser->pos] == '(') {
             if (strcmp(name, "ever_return") == 0) {
                 if (!match_char(parser, '(')) {
@@ -800,11 +789,17 @@ static int parse_primary(Parser *parser, Value *out) {
                 free(name);
                 return ok;
             }
-            // Check if it's a variable containing a lambda
+
             {
+                Environment *lookup_env = parser->env;
                 int idx = find_variable(parser->env, name);
-                if (idx >= 0 && parser->env->items[idx].value.type == VALUE_LAMBDA) {
-                    *out = clone_value(parser->env->items[idx].value);
+                if (idx < 0 && parser->env != g_root_env && g_root_env &&
+                    g_current_function && !g_current_function->is_module) {
+                    idx = find_variable(g_root_env, name);
+                    if (idx >= 0) lookup_env = g_root_env;
+                }
+                if (idx >= 0 && lookup_env->items[idx].value.type == VALUE_LAMBDA) {
+                    *out = clone_value(lookup_env->items[idx].value);
                     free(name);
                     CallArgList args = {0};
                     if (!parse_call_arguments(parser, &args)) {
@@ -821,11 +816,17 @@ static int parse_primary(Parser *parser, Value *out) {
                     return 1;
                 }
             }
-            // Check if it's a class (for object creation: ClassName(args))
+
             {
+                Environment *lookup_env = parser->env;
                 int idx = find_variable(parser->env, name);
-                if (idx >= 0 && parser->env->items[idx].value.type == VALUE_CLASS) {
-                    char *class_name = qs_strdup(parser->env->items[idx].value.as.class_def.name);
+                if (idx < 0 && parser->env != g_root_env && g_root_env &&
+                    g_current_function && !g_current_function->is_module) {
+                    idx = find_variable(g_root_env, name);
+                    if (idx >= 0) lookup_env = g_root_env;
+                }
+                if (idx >= 0 && lookup_env->items[idx].value.type == VALUE_CLASS) {
+                    char *class_name = qs_strdup(lookup_env->items[idx].value.as.class_def.name);
                     free(name);
                     CallArgList args = {0};
                     if (!parse_call_arguments(parser, &args)) {
@@ -834,17 +835,14 @@ static int parse_primary(Parser *parser, Value *out) {
                         return 0;
                     }
 
-                    // Create object
                     Value obj = make_object(class_name);
                     free(class_name);
 
-                    // Find init method
                     char init_key[256];
                     snprintf(init_key, sizeof(init_key), "%s.init", obj.as.object.data->class_name);
                     Function *init_func = find_function(init_key);
 
                     if (init_func) {
-                        // Call init(self, args...)
                         CallArgList init_args = {0};
                         init_args.count = args.count + 1;
                         init_args.items = calloc(args.count + 1, sizeof(CallArg));
@@ -892,6 +890,14 @@ static int parse_primary(Parser *parser, Value *out) {
         }
 
         int index = find_variable(parser->env, name);
+        Environment *var_env = parser->env;
+        if (index < 0 && parser->env != g_root_env && g_root_env &&
+            g_current_function && !g_current_function->is_module) {
+            index = find_variable(g_root_env, name);
+            if (index >= 0) {
+                var_env = g_root_env;
+            }
+        }
         if (index < 0) {
             char msg[256];
             snprintf(msg, sizeof(msg), "unknown variable '%s'", name);
@@ -900,10 +906,10 @@ static int parse_primary(Parser *parser, Value *out) {
             return 0;
         }
         parser->var_index = index;
-        *out = clone_value(parser->env->items[index].value);
+        g_var_is_global = (var_env == g_root_env) ? 1 : 0;
+        *out = clone_value(var_env->items[index].value);
         free(name);
 
-        // Check if this is a lambda being called
         if (out->type == VALUE_LAMBDA && parser->text[parser->pos] == '(') {
             CallArgList args = {0};
             if (!parse_call_arguments(parser, &args)) {
@@ -1394,9 +1400,10 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         if (args->count != 1) { parser_error(parser, "indexOf needs one value"); return 0; }
         char *needle = value_to_string(args->items[0]);
         const char *pos = strstr(out->as.string, needle);
+        long index = pos ? (long)(pos - out->as.string) + 1 : 0;
         free(needle);
         free_value(*out);
-        *out = pos ? make_integer((long)(pos - out->as.string) + 1) : make_integer(0);
+        *out = make_integer(index);
         return 1;
     }
 
@@ -1608,10 +1615,11 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
                     return 0;
                 }
                 if (value_truthy(cond)) {
+                    Value found = clone_value(out->as.list.items[i]);
                     free_value(cond);
                     free_call_args(&call_args);
                     free_value(*out);
-                    *out = clone_value(out->as.list.items[i]);
+                    *out = found;
                     return 1;
                 }
                 free_value(cond);
@@ -1620,8 +1628,9 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         } else {
             for (size_t i = 0; i < out->as.list.count; i++) {
                 if (values_equal(out->as.list.items[i], args->items[0])) {
+                    Value found = clone_value(out->as.list.items[i]);
                     free_value(*out);
-                    *out = clone_value(out->as.list.items[i]);
+                    *out = found;
                     return 1;
                 }
             }
@@ -1643,8 +1652,9 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         char *type_name = args->items[0].as.string;
         for (size_t i = 0; i < out->as.list.count; i++) {
             if (type_matches(type_name, out->as.list.items[i])) {
+                Value found = clone_value(out->as.list.items[i]);
                 free_value(*out);
-                *out = clone_value(out->as.list.items[i]);
+                *out = found;
                 return 1;
             }
         }
@@ -1669,14 +1679,11 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         return 1;
     }
 
-    // Handle object method calls: obj.method(args)
     if (out->type == VALUE_OBJECT) {
-        // Look up method as ClassName.method_name
         char mk[256];
         snprintf(mk, sizeof(mk), "%s.%s", out->as.object.data->class_name, method);
         Function *f = find_function(mk);
         if (f) {
-            // Call method with self as first argument
             CallArgList call_args = {0};
             call_args.count = args->count + 1;
             call_args.items = calloc(args->count + 1, sizeof(CallArg));
@@ -1698,9 +1705,8 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
             *out = result;
             return 1;
         }
-        // Check for field access (no args)
+
         if (args->count == 0) {
-            // Look up field in object
             for (size_t i = 0; i < out->as.object.data->fields.count; i++) {
                 if (strcmp(out->as.object.data->fields.items[i].key, method) == 0) {
                     Value field_val = clone_value(out->as.object.data->fields.items[i].value);
@@ -1709,7 +1715,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
                     return 1;
                 }
             }
-            // Try as method with 0 args (property access)
+
             char mk2[256];
             snprintf(mk2, sizeof(mk2), "%s.%s", out->as.object.data->class_name, method);
             Function *f2 = find_function(mk2);
@@ -1735,7 +1741,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
             parser_error(parser, msg);
             return 0;
         }
-        // Call method with args
+
         char mk3[256];
         snprintf(mk3, sizeof(mk3), "%s.%s", out->as.object.data->class_name, method);
         Function *f3 = find_function(mk3);
@@ -1808,12 +1814,14 @@ static int parse_postfix(Parser *parser, Value *out) {
                 free_value(*out);
                 return 0;
             }
-            // Write back mutated value to variable for in-place methods
+
             if (parser->var_index >= 0 && is_mutation) {
-                free_value(parser->env->items[parser->var_index].value);
-                parser->env->items[parser->var_index].value = clone_value(*out);
+                Environment *mutation_env = (g_var_is_global && g_root_env) ? g_root_env : parser->env;
+                free_value(mutation_env->items[parser->var_index].value);
+                mutation_env->items[parser->var_index].value = clone_value(*out);
             }
             parser->var_index = -1;
+            g_var_is_global = 0;
             continue;
         }
 
@@ -2323,12 +2331,93 @@ static int parse_expression(Parser *parser, Value *out) {
     return 1;
 }
 
-// ---- JSON support (restored) ----
+static int json_hex4(const char *s, unsigned int *out) {
+    unsigned int v = 0;
+    for (int k = 0; k < 4; k++) {
+        char h = s[k];
+        int d;
+        if (h >= '0' && h <= '9') d = h - '0';
+        else if (h >= 'a' && h <= 'f') d = h - 'a' + 10;
+        else if (h >= 'A' && h <= 'F') d = h - 'A' + 10;
+        else return 0;
+        v = (v << 4) | (unsigned int)d;
+    }
+    *out = v;
+    return 1;
+}
+
+static void json_utf8_append(char **buf, size_t *len, size_t *cap, unsigned int cp) {
+    if (*len + 4 >= *cap) { *cap = *cap * 2 + 8; *buf = realloc(*buf, *cap); }
+    if (cp <= 0x7F) {
+        (*buf)[(*len)++] = (char)cp;
+    } else if (cp <= 0x7FF) {
+        (*buf)[(*len)++] = (char)(0xC0 | (cp >> 6));
+        (*buf)[(*len)++] = (char)(0x80 | (cp & 0x3F));
+    } else if (cp <= 0xFFFF) {
+        (*buf)[(*len)++] = (char)(0xE0 | (cp >> 12));
+        (*buf)[(*len)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        (*buf)[(*len)++] = (char)(0x80 | (cp & 0x3F));
+    } else {
+        (*buf)[(*len)++] = (char)(0xF0 | (cp >> 18));
+        (*buf)[(*len)++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        (*buf)[(*len)++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        (*buf)[(*len)++] = (char)(0x80 | (cp & 0x3F));
+    }
+    (*buf)[*len] = '\0';
+}
+
 static int json_parse_value(const char *text, int *pos, Value *out, int *err) {
     while (text[*pos] == ' ' || text[*pos] == '\t' || text[*pos] == '\n' || text[*pos] == '\r') (*pos)++;
     char ch = text[*pos];
-    if (ch == '"') { (*pos)++; size_t cap = 64; size_t len = 0; char *result = malloc(cap); result[0] = '\0';
-        while (text[*pos] && text[*pos] != '"') { if (text[*pos] == '\\') { (*pos)++; char c = text[*pos]; switch (c) { case 'n': c = '\n'; break; case 't': c = '\t'; break; case 'r': c = '\r'; break; case '\\': c = '\\'; break; case '"': c = '"'; break; default: break; } if (len+2>=cap){cap*=2;result=realloc(result,cap);} result[len++]=c; result[len]='\0'; } else { if (len+2>=cap){cap*=2;result=realloc(result,cap);} result[len++]=text[*pos]; result[len]='\0'; } (*pos)++; } if (text[*pos]=='"') (*pos)++; *out = make_string_owned(result); return 1; }
+    if (ch == '"') {
+        (*pos)++;
+        size_t cap = 32, len = 0;
+        char *result = malloc(cap);
+        result[0] = '\0';
+        while (text[*pos] && text[*pos] != '"') {
+            unsigned char c = (unsigned char)text[*pos];
+            if (c == '\\') {
+                (*pos)++;
+                char esc = text[*pos];
+                unsigned int cp = 0;
+                if (esc == 'u' && json_hex4(text + *pos + 1, &cp)) {
+                    unsigned int lo = 0;
+                    *pos += 4;
+                    if (cp >= 0xD800 && cp <= 0xDBFF &&
+                        text[*pos + 1] == '\\' && text[*pos + 2] == 'u' &&
+                        json_hex4(text + *pos + 3, &lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+                        cp = 0x10000u + ((cp - 0xD800u) << 10) + (lo - 0xDC00u);
+                        *pos += 6;
+                    }
+                    json_utf8_append(&result, &len, &cap, cp);
+                } else {
+                    char decoded = esc;
+                    switch (esc) {
+                        case 'n': decoded = '\n'; break;
+                        case 't': decoded = '\t'; break;
+                        case 'r': decoded = '\r'; break;
+                        case 'b': decoded = '\b'; break;
+                        case 'f': decoded = '\f'; break;
+                        case '/': decoded = '/'; break;
+                        case '"': decoded = '"'; break;
+                        case '\\': decoded = '\\'; break;
+                        default: decoded = esc; break;
+                    }
+                    if (len + 2 >= cap) { cap *= 2; result = realloc(result, cap); }
+                    result[len++] = decoded;
+                    result[len] = '\0';
+                }
+            } else {
+                if (len + 2 >= cap) { cap *= 2; result = realloc(result, cap); }
+                result[len++] = (char)c;
+                result[len] = '\0';
+            }
+            (*pos)++;
+        }
+        if (text[*pos] == '"') (*pos)++;
+        *out = make_string_owned(result);
+        return 1;
+    }
     if (ch == '{') { (*pos)++; Value map = make_dict_empty(); while (text[*pos]==' ') (*pos)++;
         if (text[*pos]=='}') { (*pos)++; *out = map; return 1; }
         while (1) {

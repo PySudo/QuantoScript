@@ -16,10 +16,13 @@ CPPFLAGS ?=
 LDFLAGS  ?=
 LIBS     ?=
 
-VERSION  := 1.0.0
+VERSION  := 1.1.0
 SRC       = src/quanto.c
 PARTS     = $(wildcard src/parts/*.inc)
 EXE      :=
+
+# Expose the version to the C sources (src/parts/types.inc provides a fallback).
+CPPFLAGS += -DQS_VERSION=\"$(VERSION)\"
 
 UNAME_S  := $(shell uname -s 2>/dev/null || echo Windows)
 PKG_CONFIG ?= pkg-config

@@ -1,10 +1,14 @@
 # Time library demo
 from "../stdlib/time.qs" import now, localtime, format, now_str, today_str
 from "../stdlib/time.qs" import year, month, day, hour, minute, second
-from "../stdlib/time.qs" import add_days, diff_seconds
+from "../stdlib/time.qs" import add_days, diff_seconds, sleep
 
 # Current timestamp
 print("Timestamp:", now())
+
+# Pause execution for the given number of milliseconds
+sleep(50)
+print("Slept 50ms")
 
 # Local time as map
 t = localtime()

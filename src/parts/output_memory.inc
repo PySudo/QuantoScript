@@ -46,7 +46,6 @@ static void print_list_value(Value value) {
 }
 
 static void free_environment(Environment *env) {
-    // Free slot-based locals
     if (env->slots) {
         for (size_t i = 0; i < env->slot_count; i++) {
             free_value(env->slots[i]);
@@ -55,7 +54,7 @@ static void free_environment(Environment *env) {
         env->slots = NULL;
         env->slot_count = 0;
     }
-    // Free name-based items (globals)
+
     for (size_t i = 0; i < env->count; i++) {
         free(env->items[i].name);
         free_value(env->items[i].value);

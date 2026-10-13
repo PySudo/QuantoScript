@@ -2,6 +2,7 @@ static int run_program(Program *program) {
     int ok = 1;
     Environment env = {0};
     g_program = program;
+    g_root_env = &env;
     strip_block_comments(program);
     task_queue_init();
     object_registry_init();
@@ -37,6 +38,7 @@ static int run_program(Program *program) {
     }
 
     free_environment(&env);
+    g_root_env = NULL;
     object_registry_free_all();
     free_functions();
     free_modules();
@@ -113,7 +115,6 @@ static QS_UNUSED_FN int fmt_file(const char *path) {
     for (size_t i = 0; i < program.count; i++) {
         char *trimmed = trim_copy(program.items[i], strlen(program.items[i]));
 
-        // Skip empty lines if previous was blank
         if (trimmed[0] == '\0') {
             if (!prev_blank) {
                 printf("\n");
@@ -124,7 +125,6 @@ static QS_UNUSED_FN int fmt_file(const char *path) {
         }
         prev_blank = 0;
 
-        // Decrease indent for closing braces
         if (trimmed[0] == '}') {
             indent--;
             if (indent < 0) {
@@ -132,15 +132,12 @@ static QS_UNUSED_FN int fmt_file(const char *path) {
             }
         }
 
-        // Print indentation
         for (int n = 0; n < indent; n++) {
             printf("    ");
         }
 
-        // Print the line
         printf("%s\n", trimmed);
 
-        // Increase indent for opening braces
         size_t brace = 0;
         if (line_has_open_brace(trimmed, 0, &brace) && trimmed[0] != '}') {
             indent++;
@@ -186,8 +183,6 @@ static QS_UNUSED_FN int run_repl(void) {
     char buffer[65536];
     int in_block = 0;
 
-    // Persistent program — accumulates all REPL lines so function/class bodies
-    // reference valid memory (not freed after each statement).
     Program repl_prog = {0};
     repl_prog.path = qs_strdup("<repl>");
     repl_prog.dir = qs_strdup(".");
@@ -214,14 +209,13 @@ static QS_UNUSED_FN int run_repl(void) {
             continue;
         }
 
-        // Multiline block detection
         if (in_block) {
             size_t buf_len = strlen(buffer);
             if (buf_len + len + 2 < sizeof(buffer)) {
                 strcat(buffer, "\n");
                 strcat(buffer, line);
             }
-            // Count braces to check if block is complete
+
             int depth = 0;
             for (size_t i = 0; buffer[i]; i++) {
                 if (buffer[i] == '{') depth++;
@@ -229,14 +223,13 @@ static QS_UNUSED_FN int run_repl(void) {
             }
             if (depth <= 0) {
                 in_block = 0;
-                // Execute the complete block
+
                 err.line = 0;
                 err.column = 0;
                 err.message[0] = '\0';
-                // Check if accumulated block starts with an import
+
                 size_t check_pos = 0;
                 if (line_starts_with(buffer, "from", &check_pos) || line_starts_with(buffer, "import", &check_pos)) {
-                    size_t start_line = repl_prog.count;
                     program_push(&repl_prog, qs_strdup(buffer));
                     if (!collect_imports(&repl_prog, &env, &err)) {
                         fprintf(stderr, "SyntaxError: %s\n", err.message);
@@ -245,13 +238,10 @@ static QS_UNUSED_FN int run_repl(void) {
                         }
                     }
                 } else {
-                    // Append block lines to persistent program, execute only new lines
                     size_t start_line = repl_prog.count;
 
-                    // For class definitions, merge into a single line (like the file loader does)
                     size_t check_kw = 0;
                     if (line_starts_with(buffer, "class", &check_kw)) {
-                        // Merge all lines into one (strip newlines)
                         char *merged = qs_strdup(buffer);
                         for (size_t m = 0; merged[m]; m++) {
                             if (merged[m] == '\n') merged[m] = ' ';
@@ -267,10 +257,10 @@ static QS_UNUSED_FN int run_repl(void) {
                         }
                         free(buf_copy);
                     }
-                    // Pre-register functions/classes from the full program
+
                     ParseError collect_err = {0};
                     collect_functions(&repl_prog, &collect_err);
-                    // Execute only the newly added lines
+
                     ParseError exec_err = {0};
                     if (!execute_range(&repl_prog, &env, start_line, repl_prog.count, &exec_err)) {
                         fprintf(stderr, "SyntaxError: %s\n", exec_err.message);
@@ -284,7 +274,6 @@ static QS_UNUSED_FN int run_repl(void) {
             continue;
         }
 
-        // Check if line opens a block
         {
             int depth = 0;
             for (size_t i = 0; i < len; i++) {
@@ -304,7 +293,7 @@ static QS_UNUSED_FN int run_repl(void) {
 
         size_t assignment_pos = 0;
         char assign_op = 0;
-        // Check for statement keywords first (before assignment, which can match = inside blocks)
+
         size_t kw_check = 0;
         int is_statement = (line_starts_with(line, "func", &kw_check) ||
                            line_starts_with(line, "class", &kw_check) ||
@@ -319,7 +308,7 @@ static QS_UNUSED_FN int run_repl(void) {
         if (is_statement) {
             size_t start_line = repl_prog.count;
             program_push(&repl_prog, qs_strdup(line));
-            // Handle imports via collect_imports (execute_range skips them)
+
             if (line_starts_with(line, "from", &kw_check) || line_starts_with(line, "import", &kw_check)) {
                 if (!collect_imports(&repl_prog, &env, &err)) {
                     fprintf(stderr, "SyntaxError: %s\n", err.message);
@@ -349,7 +338,7 @@ static QS_UNUSED_FN int run_repl(void) {
         } else {
             size_t start_line = repl_prog.count;
             program_push(&repl_prog, qs_strdup(line));
-            // Check if this is an import
+
             size_t imp_check = 0;
             if (line_starts_with(line, "from", &imp_check) || line_starts_with(line, "import", &imp_check)) {
                 if (!collect_imports(&repl_prog, &env, &err)) {
@@ -381,25 +370,23 @@ static int pkg_install(const char *url);
 static int pkg_install_deps(const char *pkg_dir, int depth);
 
 static int pkg_install(const char *url) {
-    // Parse GitHub URL: https://github.com/owner/repo or git@github.com:owner/repo.git
     char *repo_name = NULL;
 
-    // Handle HTTPS URLs
     const char *github_prefix = "https://github.com/";
     if (strncmp(url, github_prefix, strlen(github_prefix)) == 0) {
         const char *path = url + strlen(github_prefix);
-        // Remove .git suffix if present
+
         size_t path_len = strlen(path);
         if (path_len > 4 && strcmp(path + path_len - 4, ".git") == 0) {
             path_len -= 4;
         }
-        // Remove trailing slash
+
         while (path_len > 0 && path[path_len - 1] == '/') {
             path_len--;
         }
         repo_name = qs_strndup(path, path_len);
     }
-    // Handle SSH URLs
+
     else if (strncmp(url, "git@github.com:", 15) == 0) {
         const char *path = url + 15;
         size_t path_len = strlen(path);
@@ -414,21 +401,18 @@ static int pkg_install(const char *url) {
         return 1;
     }
 
-    // Replace / with _ in repo name for directory
     for (size_t i = 0; repo_name[i]; i++) {
         if (repo_name[i] == '/') {
             repo_name[i] = '_';
         }
     }
 
-    // Create packages directory
 #ifdef _WIN32
     _mkdir("packages");
 #else
     mkdir("packages", 0755);
 #endif
 
-    // Check if already installed
     char pkg_dir[1024];
     snprintf(pkg_dir, sizeof(pkg_dir), "packages/%s", repo_name);
 #ifdef _WIN32
@@ -443,7 +427,6 @@ static int pkg_install(const char *url) {
         return 0;
     }
 
-    // Clone the repository
     printf("Installing %s...\n", repo_name);
     char cmd[2048];
     snprintf(cmd, sizeof(cmd), "git clone --depth 1 %s.git packages/%s", url, repo_name);
@@ -457,7 +440,6 @@ static int pkg_install(const char *url) {
 
     printf("Package '%s' installed successfully\n", repo_name);
 
-    // Install dependencies
     pkg_install_deps(pkg_dir, 0);
 
     printf("Import with: from \"packages/%s/main.qs\" import ...\n", repo_name);
@@ -465,7 +447,6 @@ static int pkg_install(const char *url) {
     return 0;
 }
 
-// Install dependencies from quanto.json
 static int pkg_install_deps(const char *pkg_dir, int depth) {
     if (depth > 5) {
         fprintf(stderr, "Warning: dependency depth exceeded, skipping\n");
@@ -486,7 +467,6 @@ static int pkg_install_deps(const char *pkg_dir, int depth) {
     content[len] = '\0';
     fclose(f);
 
-    // Find "dependencies" section
     char *deps_start = strstr(content, "\"dependencies\"");
     if (!deps_start) {
         free(content);
@@ -495,7 +475,6 @@ static int pkg_install_deps(const char *pkg_dir, int depth) {
     deps_start += 14;
     while (*deps_start && (*deps_start == ' ' || *deps_start == ':' || *deps_start == '{')) deps_start++;
 
-    // Parse dependency entries
     int installed = 0;
     while (*deps_start && *deps_start != '}') {
         while (*deps_start && (*deps_start == ' ' || *deps_start == ',' || *deps_start == '\n')) deps_start++;
@@ -510,7 +489,6 @@ static int pkg_install_deps(const char *pkg_dir, int depth) {
         deps_start = key_end + 1;
         while (*deps_start && *deps_start != ',' && *deps_start != '}') deps_start++;
 
-        // Convert URL to directory name
         char *slash = strrchr(dep_url, '/');
         if (slash) {
             char dir_name[512];
@@ -539,7 +517,6 @@ static int pkg_install_deps(const char *pkg_dir, int depth) {
     return installed;
 }
 
-// Package manager: list installed packages
 static QS_UNUSED_FN int pkg_list(void) {
 #ifdef _WIN32
     DWORD attrs = GetFileAttributesA("packages");
@@ -581,7 +558,6 @@ static QS_UNUSED_FN int pkg_list(void) {
     return 0;
 }
 
-// Package manager: remove a package
 static QS_UNUSED_FN int pkg_remove(const char *name) {
     char pkg_dir[1024];
     snprintf(pkg_dir, sizeof(pkg_dir), "packages/%s", name);
@@ -597,7 +573,6 @@ static QS_UNUSED_FN int pkg_remove(const char *name) {
         return 1;
     }
 
-    // Remove directory recursively
     char cmd[2048];
 #ifdef _WIN32
     snprintf(cmd, sizeof(cmd), "rmdir /s /q \"%s\"", pkg_dir);
@@ -680,13 +655,10 @@ int lint_file(const char *path) {
     int line_num = 1;
     const char *line = content;
 
-    // Simple linting: check for common patterns
     while (*line) {
-        // Check for == instead of = in assignments (common mistake)
         const char *p = line;
         while (*p && *p != '\n') {
             if (*p == '=' && *(p+1) != '=' && *(p+1) != '>' && p != line && *(p-1) != '!' && *(p-1) != '<' && *(p-1) != '=') {
-                // This is an assignment, check if RHS looks like a comparison
                 const char *rhs = p + 1;
                 while (*rhs && *rhs != '\n') {
                     if (*rhs == '=' && *(rhs+1) == '=' && *(rhs-1) != '!' && *(rhs-1) != '<') {
@@ -700,9 +672,7 @@ int lint_file(const char *path) {
             p++;
         }
 
-        // Check for empty catch blocks
         if (strncmp(line, "} oops {", 8) == 0 || strncmp(line, "} oops{", 7) == 0) {
-            // Check if next line is just }
             const char *next = line;
             while (*next && *next != '\n') next++;
             if (*next == '\n') {
@@ -715,7 +685,6 @@ int lint_file(const char *path) {
             }
         }
 
-        // Move to next line
         while (*line && *line != '\n') line++;
         if (*line == '\n') line++;
         line_num++;
@@ -745,7 +714,6 @@ int doc_file(const char *path) {
     content[len] = '\0';
     fclose(f);
 
-    // Extract filename without path
     const char *filename = strrchr(path, '/');
     if (!filename) filename = strrchr(path, '\\');
     if (filename) filename++; else filename = path;
@@ -758,30 +726,25 @@ int doc_file(const char *path) {
     int has_comment = 0;
 
     while (*line) {
-        // Check if line is a comment
         const char *trimmed = line;
         while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
 
         if (*trimmed == '#') {
-            // Store comment (will print before next function)
             if (has_comment) strcat(prev_comment, "\n");
             strncat(prev_comment, trimmed + 1, sizeof(prev_comment) - strlen(prev_comment) - 1);
             has_comment = 1;
         } else if (strncmp(trimmed, "func ", 5) == 0) {
-            // Print any preceding comments
             if (has_comment) {
-                // Trim leading newline
                 char *c = prev_comment;
                 while (*c == '\n') c++;
                 printf("%s\n", c);
                 prev_comment[0] = '\0';
                 has_comment = 0;
             }
-            // Print function signature
+
             printf("```\n%s\n```\n\n", trimmed);
         }
 
-        // Move to next line
         while (*line && *line != '\n') line++;
         if (*line == '\n') line++;
         line_num++;
@@ -791,11 +754,42 @@ int doc_file(const char *path) {
     return 0;
 }
 
+#ifdef _WIN32
+static UINT g_console_output_cp = 0;
+static UINT g_console_input_cp = 0;
+
+static void qs_restore_console(void) {
+    if (g_console_output_cp) {
+        SetConsoleOutputCP(g_console_output_cp);
+    }
+    if (g_console_input_cp) {
+        SetConsoleCP(g_console_input_cp);
+    }
+}
+#endif
+
+static void qs_init_console(void) {
+#ifdef _WIN32
+    g_console_output_cp = GetConsoleOutputCP();
+    g_console_input_cp = GetConsoleCP();
+    if (g_console_output_cp) {
+        SetConsoleOutputCP(CP_UTF8);
+    }
+    if (g_console_input_cp) {
+        SetConsoleCP(CP_UTF8);
+    }
+    if (g_console_output_cp || g_console_input_cp) {
+        atexit(qs_restore_console);
+    }
+#endif
+}
+
 int main(int argc, char **argv) {
+    qs_init_console();
     if (argc == 1) {
         return run_repl();
     }
-    // Handle --help and -h
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             fprintf(stderr, "usage:\n");
@@ -824,7 +818,7 @@ int main(int argc, char **argv) {
             return 0;
         }
     }
-    // Check for flags (independent of argument position)
+
     int sandbox = 0;
     int sandbox_path_idx = 0;
     for (int i = 1; i < argc; i++) {
@@ -844,14 +838,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    // Collect non-flag arguments for command dispatch
     const char *cmd = NULL;
     const char *file_arg = NULL;
-    const char *extra_arg = NULL;  // for -o output, compile output, etc.
+    const char *extra_arg = NULL;
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
             if (strcmp(argv[i], "--sandbox") == 0) {
-                // skip sandbox and its optional path arg
                 if (i + 1 < argc && argv[i + 1][0] != '-') i++;
             }
             continue;
@@ -865,12 +857,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    // No command or file found
     if (cmd == NULL && file_arg == NULL) {
-        // Bare flags like --dump-bytecode with no command: show usage
     }
 
-    // Single bare file: qs file.qs (tree-walk interpreter)
     if (cmd != NULL && file_arg == NULL && cmd[0] != '-' &&
         (strlen(cmd) > 3 && strcmp(cmd + strlen(cmd) - 3, ".qs") == 0)) {
         return run_file(cmd);
@@ -884,32 +873,31 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (cmd && strcmp(cmd, "version") == 0) {
-        printf("QuantoScript 1.0.0\n");
+        printf("QuantoScript %s\n", QS_VERSION);
         return 0;
     }
     if (cmd && strcmp(cmd, "init") == 0) {
-        // Create project scaffold
 #ifdef _WIN32
         _mkdir("test");
 #else
         mkdir("test", 0755);
 #endif
-        // Write main.qs
+
         FILE *f = fopen("main.qs", "w");
         if (f) {
             fprintf(f, "# Main entry point\n\nprint(\"Hello from QuantoScript!\")\n");
             fclose(f);
         }
-        // Write test/example_test.qs
+
         f = fopen("test/example_test.qs", "w");
         if (f) {
             fprintf(f, "# Example test\nassert_eq(1 + 1, 2)\n");
             fclose(f);
         }
-        // Write quanto.json
+
         f = fopen("quanto.json", "w");
         if (f) {
-            fprintf(f, "{\n  \"name\": \"my-project\",\n  \"version\": \"1.0.0\",\n  \"dependencies\": {}\n}\n");
+            fprintf(f, "{\n  \"name\": \"my-project\",\n  \"version\": \"%s\",\n  \"dependencies\": {}\n}\n", QS_VERSION);
             fclose(f);
         }
         printf("Project initialized!\n");
@@ -949,7 +937,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Compilation failed\n");
             return 1;
         }
-        // Determine output path: extra_arg if -o was given, else derive from input
+
         const char *outpath = NULL;
         char derived[1024];
         if (extra_arg) {

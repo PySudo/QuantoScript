@@ -1,91 +1,86 @@
-// QuantoScript Bytecode VM - Instruction Set
-
-// Debug output flags (set by CLI, used by dump/validate)
 static int g_dump_bytecode = 0;
 static int g_trace_vm = 0;
 
 typedef enum {
-    OP_LOAD_CONST,      // Push constant value
-    OP_LOAD_VAR,        // Push variable value
-    OP_STORE_VAR,       // Store top of stack to variable
-    OP_ADD,             // a + b
-    OP_SUB,             // a - b
-    OP_MUL,             // a * b
-    OP_DIV,             // a / b
-    OP_MOD,             // a % b
-    OP_NEG,             // -a
-    OP_EQUAL,           // a == b
-    OP_NOT_EQUAL,       // a != b
-    OP_LESS,            // a < b
-    OP_GREATER,         // a > b
-    OP_LESS_EQUAL,      // a <= b
-    OP_GREATER_EQUAL,   // a >= b
-    OP_AND,             // a and b
-    OP_OR,              // a or b
-    OP_NOT,             // not a
-    OP_PRINT,           // print top of stack
-    OP_JUMP,            // unconditional jump
-    OP_JUMP_IF_FALSE,   // conditional jump
-    OP_BUILD_LIST,      // build list from stack items
-    OP_BUILD_MAP,       // build map from stack items
-    OP_LOAD_INDEX,      // index into list/string/map
-    OP_STORE_INDEX,     // store into list/map
-    OP_CALL,            // call function
-    OP_RETURN,          // return from function
-    OP_POP,             // discard top of stack
-    OP_DUP,             // duplicate top of stack
-    OP_HALT,            // stop execution
-    OP_CALL_METHOD,     // call method on object: obj arg1 arg2... -> result
-    OP_CALL_FUNC,       // call function: func arg1 arg2... -> result
-    OP_BUILD_STRING,    // concatenate N values from stack
-    OP_PRINT_MULTI,     // print N values space-separated
-    OP_EVAL_STMT,       // evaluate source text via tree-walk interpreter
-    OP_SLICE,           // slice obj[start:end]
-    OP_JUMP_IF_TRUE,    // jump if top of stack is truthy
-    OP_CALL_USER_FUNC,  // call user-defined func via sub-VM
-    OP_TRY_PUSH,        // push exception handler onto try stack
-    OP_CATCH_END,       // pop exception handler from try stack
-    OP_LOAD_LOCAL,      // push local variable by slot index
-    OP_STORE_LOCAL,     // store top of stack to local variable by slot index
-    // Object system
-    OP_NEW,             // create new object from class: ClassName -> object
-    OP_GET_FIELD,       // get field: object "field" -> value
-    OP_SET_FIELD        // set field: object "field" value -> object
+    OP_LOAD_CONST,
+    OP_LOAD_VAR,
+    OP_STORE_VAR,
+    OP_ADD,
+    OP_SUB,
+    OP_MUL,
+    OP_DIV,
+    OP_MOD,
+    OP_NEG,
+    OP_EQUAL,
+    OP_NOT_EQUAL,
+    OP_LESS,
+    OP_GREATER,
+    OP_LESS_EQUAL,
+    OP_GREATER_EQUAL,
+    OP_AND,
+    OP_OR,
+    OP_NOT,
+    OP_IN,
+    OP_PRINT,
+    OP_JUMP,
+    OP_JUMP_IF_FALSE,
+    OP_BUILD_LIST,
+    OP_BUILD_MAP,
+    OP_LOAD_INDEX,
+    OP_STORE_INDEX,
+    OP_CALL,
+    OP_RETURN,
+    OP_POP,
+    OP_DUP,
+    OP_HALT,
+    OP_CALL_METHOD,
+    OP_CALL_FUNC,
+    OP_BUILD_STRING,
+    OP_PRINT_MULTI,
+    OP_EVAL_STMT,
+    OP_SLICE,
+    OP_JUMP_IF_TRUE,
+    OP_CALL_USER_FUNC,
+    OP_TRY_PUSH,
+    OP_CATCH_END,
+    OP_LOAD_LOCAL,
+    OP_STORE_LOCAL,
+
+    OP_NEW,
+    OP_GET_FIELD,
+    OP_SET_FIELD,
+    OP_THROW,
+    OP_CALL_KW
 } Opcode;
 
-// Bytecode instruction
 typedef struct {
     Opcode op;
-    Value arg;      // argument (for LOAD_CONST, LOAD_VAR, etc.)
-    int arg_i;      // integer argument (for jumps, counts)
-    int line;       // source line for error messages
+    Value arg;
+    int arg_i;
+    int line;
 } Instruction;
 
-// Bytecode program
 typedef struct {
     Instruction *instructions;
     size_t count;
     size_t capacity;
-    Value *constants;       // constant pool
+    Value *constants;
     size_t const_count;
     size_t const_capacity;
 } BytecodeProgram;
 
-// CallFrame: stores state for one function call
-// Inline storage for up to 8 local variables (eliminates heap allocation)
 #define MAX_INLINE_SLOTS 8
 typedef struct {
-    BytecodeProgram *program;       // Caller's bytecode program
-    Environment *env;               // Caller's environment
-    int saved_ip;                   // Return address (instruction after call)
-    int saved_stack_top;            // Caller's stack position before call
-    int base;                       // Base index for local variables in VM stack
-    int try_stack_top;              // Saved try stack depth
-    Value local_slots[MAX_INLINE_SLOTS];  // Inline slot storage (NO HEAP)
-    int local_count;                // Number of active local slots
+    BytecodeProgram *program;
+    Environment *env;
+    int saved_ip;
+    int saved_stack_top;
+    int base;
+    int try_stack_top;
+    Value local_slots[MAX_INLINE_SLOTS];
+    int local_count;
 } CallFrame;
 
-// VM state
 typedef struct {
     BytecodeProgram *program;
     Environment *env;
@@ -95,7 +90,10 @@ typedef struct {
     int try_stack[64];
     int try_stack_top;
     int try_stack_depths[64];
-    // CallFrame infrastructure (Phase 1 — added but not yet used by execution)
+    BytecodeProgram *try_stack_prog[64];
+    int pending_exception;
+    char *exception_msg;
+
     CallFrame frames[256];
     int frame_count;
 } VM;
@@ -120,14 +118,13 @@ static void bytecode_free(BytecodeProgram *prog) {
     free(prog->constants);
 }
 
-// Compiled function storage: name → bytecode program mapping
 #define MAX_COMPILED_FUNCS 256
 typedef struct {
     char *name;
     BytecodeProgram body;
     char **param_names;
     int param_count;
-    int slot_count;     // Number of local variable slots needed
+    int slot_count;
 } CompiledFunc;
 static CompiledFunc g_compiled_funcs[MAX_COMPILED_FUNCS];
 static int g_compiled_func_count = 0;
@@ -194,17 +191,13 @@ static void vm_init(VM *vm, BytecodeProgram *prog, Environment *env) {
     vm->ip = 0;
     vm->try_stack_top = 0;
     vm->frame_count = 0;
+    vm->pending_exception = 0;
+    vm->exception_msg = NULL;
 }
-
-// ---- CallFrame infrastructure (Phase 1) ----
-// These functions are added but NOT yet called by the execution engine.
-// The existing sub-VM architecture continues to handle function calls.
 
 #define MAX_FRAMES 256
 
-// Push a new call frame. Returns 1 on success, 0 on overflow.
 static int frame_push(VM *vm, BytecodeProgram *prog, Environment *env) {
-    AUDIT_FRAME_PUSH();
     if (vm->frame_count >= MAX_FRAMES) {
         fprintf(stderr, "maximum recursion depth exceeded (256)\n");
         return 0;
@@ -222,9 +215,7 @@ static int frame_push(VM *vm, BytecodeProgram *prog, Environment *env) {
     return 1;
 }
 
-// Pop the current call frame. Restores caller state.
 static void frame_pop(VM *vm) {
-    AUDIT_FRAME_POP();
     if (vm->frame_count <= 0) {
         fprintf(stderr, "frame_pop: no frame to pop\n");
         return;
@@ -237,7 +228,6 @@ static void frame_pop(VM *vm) {
     vm->try_stack_top = f->try_stack_top;
 }
 
-// Get current frame (top of frame stack)
 static QS_UNUSED_FN CallFrame *frame_current(VM *vm) {
     if (vm->frame_count <= 0) return NULL;
     return &vm->frames[vm->frame_count - 1];
@@ -263,8 +253,6 @@ static Value vm_peek(VM *vm) {
     return vm->stack[vm->stack_top - 1];
 }
 
-// ---- Debugging infrastructure ----
-
 static const char *opcode_name(Opcode op) {
     switch (op) {
         case OP_LOAD_CONST: return "LOAD_CONST";
@@ -285,6 +273,7 @@ static const char *opcode_name(Opcode op) {
         case OP_AND: return "AND";
         case OP_OR: return "OR";
         case OP_NOT: return "NOT";
+        case OP_IN: return "IN";
         case OP_PRINT: return "PRINT";
         case OP_JUMP: return "JUMP";
         case OP_JUMP_IF_FALSE: return "JUMP_IF_FALSE";
@@ -312,6 +301,8 @@ static const char *opcode_name(Opcode op) {
         case OP_NEW: return "NEW";
         case OP_GET_FIELD: return "GET_FIELD";
         case OP_SET_FIELD: return "SET_FIELD";
+        case OP_THROW: return "THROW";
+        case OP_CALL_KW: return "CALL_KW";
     }
     return "UNKNOWN";
 }
@@ -339,7 +330,7 @@ static QS_UNUSED_FN void bytecode_dump(BytecodeProgram *prog, const char *label)
             case OP_TRY_PUSH:
                 fprintf(stderr, " -> [%d] (catch target)", instr->arg_i);
                 break;
-            case OP_CALL_USER_FUNC: case OP_CALL_FUNC: case OP_CALL_METHOD:
+            case OP_CALL_USER_FUNC: case OP_CALL_FUNC: case OP_CALL_METHOD: case OP_CALL_KW:
                 if (instr->arg.type == VALUE_STRING && instr->arg.as.string)
                     fprintf(stderr, " '%s' argc=%d", instr->arg.as.string, instr->arg_i);
                 break;
@@ -363,6 +354,7 @@ static QS_UNUSED_FN void bytecode_dump(BytecodeProgram *prog, const char *label)
             case OP_EQUAL: case OP_NOT_EQUAL: case OP_LESS: case OP_GREATER:
             case OP_LESS_EQUAL: case OP_GREATER_EQUAL: case OP_AND:
             case OP_OR: case OP_NOT: case OP_LOAD_INDEX: case OP_STORE_INDEX:
+            case OP_THROW: case OP_IN:
                 break;
             default:
                 fprintf(stderr, " arg_i=%d", instr->arg_i);
