@@ -59,7 +59,7 @@ body:
     attributes:
       label: QuantoScript version
       description: Output of `qs version`.
-      placeholder: "QuantoScript 1.1.1"
+      placeholder: "QuantoScript 1.1.2"
     validations:
       required: true
   - type: dropdown

@@ -16,7 +16,7 @@ CPPFLAGS ?=
 LDFLAGS  ?=
 LIBS     ?=
 
-VERSION  := 1.1.1
+VERSION  := 1.1.2
 SRC       = src/quanto.c
 PARTS     = $(wildcard src/parts/*.inc)
 EXE      :=

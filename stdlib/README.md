@@ -18,7 +18,7 @@ from "stdlib/fs.qs" import *
 
 | Module | Functions | Description |
 |--------|-----------|-------------|
-| `core.qs` | `env` | Environment variable access |
+| `core.qs` | `env`, `parse_env`, `load_env` | Environment variable access and `.env` files |
 | `fs.qs` | `exists`, `read`, `write`, `mkdir`, `remove`, `rename`, `is_dir`, `list_dir`, `basename`, `dirname`, `extension`, `join_path` | File system operations and path helpers |
 | `http.qs` | `get`, `post`, `put`, `delete`, `patch` | HTTP client (auto-JSON for map bodies) |
 | `url.qs` | `url_encode`, `url_decode` | Percent-encoding for URLs |
@@ -105,6 +105,19 @@ from "stdlib/log.qs" import info, warn
 
 info("Application started")
 warn("Low memory")
+```
+
+### Environment and `.env` files
+
+```qs
+from "stdlib/core.qs" import env, load_env
+
+print(env("PATH"))          # an OS environment variable
+
+cfg = load_env(".env")      # a .env file -> map
+if cfg.has("API_KEY") {
+    print(cfg["API_KEY"])
+}
 ```
 
 ### Process Execution

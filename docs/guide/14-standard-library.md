@@ -251,10 +251,25 @@ print(sample([10, 20, 30, 40, 50], 3))
 | Function | Description |
 |----------|-------------|
 | `env(name)` | value of an environment variable |
+| `parse_env(text)` | parse `.env`-formatted text into a map |
+| `load_env(path)` | load a `.env` file into a map (empty map if missing) |
 
 ```qscript
 from "stdlib/core.qs" import env
 print(env("PATH"))
+```
+
+`load_env` reads a dotenv-style file: blank lines and lines starting with `#`
+are skipped, spaces around the `=` are trimmed, and any `=` inside a value is
+kept. Missing keys throw, so test with `has` first.
+
+```qscript
+from "stdlib/core.qs" import load_env
+
+cfg = load_env(".env")
+if cfg.has("API_KEY") {
+    print(cfg["API_KEY"])
+}
 ```
 
 ---

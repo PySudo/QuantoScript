@@ -4,6 +4,15 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-10-14
+
+### Features
+- Added `parse_env(text)` and `load_env(path)` to `stdlib/core.qs` for reading dotenv-style `.env` files. Blank lines and `#` comments are skipped, spaces around the `=` are trimmed, and `=` characters inside a value are preserved. `load_env` returns an empty map when the file does not exist, and missing keys throw, so callers test with `has` first.
+
+### Documentation
+- Documented list comprehensions (`[expr for x in coll if cond]`) in the Lists guide and removed them from the "not yet supported" list; they have always worked over lists, strings, and maps. Control Flow now notes that QuantoScript has no C-style `for` loop.
+- Fixed the WebSocket examples to connect with `wss://echo.websocket.org` and consume the server's greeting on connect, and replaced an unsupported C-style `for` loop with `repeat`.
+
 ## [1.1.1] — 2026-10-13
 
 ### Bug Fixes
