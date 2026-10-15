@@ -149,6 +149,7 @@ jobs:
           fi
           cp -R stdlib   "dist/$PKG/stdlib"
           cp -R examples "dist/$PKG/examples"
+          cp -R src      "dist/$PKG/src"
           cp LICENSE README.md "dist/$PKG/"
 
           # Create archive

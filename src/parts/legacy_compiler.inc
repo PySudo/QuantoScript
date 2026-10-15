@@ -1042,6 +1042,10 @@ static int probe_quanto_dir(const char *dir, char *buf, size_t bufsz) {
     FILE *f = fopen(probe, "r");
     if (!f) return 0;
     fclose(f);
+    snprintf(probe, sizeof(probe), "%s/parts/native_runtime.inc", dir);
+    f = fopen(probe, "r");
+    if (!f) return 0;
+    fclose(f);
     snprintf(buf, bufsz, "%s", dir);
     return 1;
 }
