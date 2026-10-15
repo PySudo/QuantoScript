@@ -1,0 +1,16 @@
+# QuantoScript regression suite: nondeterministic tests.
+#
+# Each line is a test file NAME whose output depends on an external service
+# (live network, third-party server, wall clock, ...) and therefore cannot be
+# compared byte-for-byte across the qs / vm / qvm paths. Such tests are still
+# executed and reported, but their results never fail the suite.
+#
+# The runner matches by base file name, so a name may appear in any directory.
+
+# Examples that issue live HTTP requests to third-party servers.
+http.qs
+http_methods.qs
+
+# Examples that open a live WebSocket to a public echo server.
+websocket.qs
+websocket_chat.qs

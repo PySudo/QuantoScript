@@ -2,6 +2,11 @@
 
 All notable changes to QuantoScript will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- The regression runner no longer fails on tests that depend on external services (the live HTTP and WebSocket examples). Those tests are listed in `tests/nondeterministic_tests.txt` and reported separately, so intermittent third-party server errors no longer break CI.
+
 ## [2.0.0] - 2026-10-15
 
 ### Breaking Changes

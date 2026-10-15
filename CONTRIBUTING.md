@@ -45,6 +45,14 @@ pwsh tests/run_regression.ps1 -Path tests/test_final.qs  # single file
 
 Every test runs on all three execution paths (qs, qs vm, qvm) and outputs are compared.
 
+Two allowlists special-case tests (matched by base file name):
+
+- `tests/expected_failures.txt` — tests whose *non-zero* exit is the correct
+  behavior (negative tests). An unexpected zero exit is reported as a failure.
+- `tests/nondeterministic_tests.txt` — tests whose output depends on an
+  external service (live network, third-party server, ...). They are still run
+  and reported, but never count toward the suite's pass/fail result.
+
 ## Code Organization
 
 - `src/quanto.c` — amalgamation entry point (don't edit directly)

@@ -52,6 +52,19 @@ if (Test-Path $expectedFile) {
     }
 }
 
+# Load the nondeterministic-test names. A listed test's output depends on an
+# external service (live network, third-party server, ...), so it cannot be
+# compared reliably across the qs / vm / qvm paths. Such tests are still run
+# and reported, but they never count toward the suite's pass/fail decision.
+$nondetNames = @{}
+$nondetFile = Join-Path $PSScriptRoot "nondeterministic_tests.txt"
+if (Test-Path $nondetFile) {
+    Get-Content $nondetFile | ForEach-Object {
+        $n = $_.Trim()
+        if ($n -and -not $n.StartsWith("#")) { $nondetNames[$n] = $true }
+    }
+}
+
 # Mask nondeterministic wall-clock values so outputs from independent runs can
 # be compared. Timestamps and elapsed/uptime measurements are the only values
 # expected to legitimately differ between the qs, vm, and qvm paths.
@@ -168,6 +181,7 @@ foreach ($tf in $testFiles) {
         VM       = $null
         QVM      = $null
         Mismatch = $false
+        Nondet   = $nondetNames.ContainsKey($tf.Name)
     }
 
     if ($runQS) {
@@ -240,17 +254,20 @@ foreach ($tf in $testFiles) {
 $totalEnd = Get-Date
 $totalRuntime = ($totalEnd - $totalStart).TotalSeconds
 
-$qsPass = @($results | Where-Object { $_.QS -and ($_.QS.Status -eq "PASS" -or $_.QS.Status -eq "XFAIL") }).Count
-$qsFail = @($results | Where-Object { $_.QS -and $_.QS.Status -ne "PASS" -and $_.QS.Status -ne "XFAIL" }).Count
-$vmPass = @($results | Where-Object { $_.VM -and ($_.VM.Status -eq "PASS" -or $_.VM.Status -eq "XFAIL") }).Count
-$vmFail = @($results | Where-Object { $_.VM -and $_.VM.Status -ne "PASS" -and $_.VM.Status -ne "XFAIL" }).Count
-$qvmPass = @($results | Where-Object { $_.QVM -and ($_.QVM.Status -eq "PASS" -or $_.QVM.Status -eq "XFAIL") }).Count
-$qvmFail = @($results | Where-Object { $_.QVM -and $_.QVM.Status -ne "PASS" -and $_.QVM.Status -ne "XFAIL" }).Count
-$mismatches = @($results | Where-Object { $_.Mismatch }).Count
+$deterministic = @($results | Where-Object { -not $_.Nondet })
+$nondetResults = @($results | Where-Object { $_.Nondet })
+
+$qsPass = @($deterministic | Where-Object { $_.QS -and ($_.QS.Status -eq "PASS" -or $_.QS.Status -eq "XFAIL") }).Count
+$qsFail = @($deterministic | Where-Object { $_.QS -and $_.QS.Status -ne "PASS" -and $_.QS.Status -ne "XFAIL" }).Count
+$vmPass = @($deterministic | Where-Object { $_.VM -and ($_.VM.Status -eq "PASS" -or $_.VM.Status -eq "XFAIL") }).Count
+$vmFail = @($deterministic | Where-Object { $_.VM -and $_.VM.Status -ne "PASS" -and $_.VM.Status -ne "XFAIL" }).Count
+$qvmPass = @($deterministic | Where-Object { $_.QVM -and ($_.QVM.Status -eq "PASS" -or $_.QVM.Status -eq "XFAIL") }).Count
+$qvmFail = @($deterministic | Where-Object { $_.QVM -and $_.QVM.Status -ne "PASS" -and $_.QVM.Status -ne "XFAIL" }).Count
+$mismatches = @($deterministic | Where-Object { $_.Mismatch }).Count
 
 $crashes = 0
 $timeouts = 0
-foreach ($r in $results) {
+foreach ($r in $deterministic) {
     if ($r.QS -and $r.QS.Status -eq "CRASH") { $crashes++ }
     if ($r.VM -and $r.VM.Status -eq "CRASH") { $crashes++ }
     if ($r.QVM -and $r.QVM.Status -eq "CRASH") { $crashes++ }
@@ -296,7 +313,7 @@ $hasIssues = ($qsFail -gt 0 -or $vmFail -gt 0 -or $qvmFail -gt 0 -or $mismatches
 if ($Verbose -or $hasIssues) {
     Write-Host ""
     Write-Host "--- Failed/Mismatched Tests ---"
-    foreach ($r in $results) {
+    foreach ($r in $deterministic) {
         $show = $false
         if ($r.QS -and $r.QS.Status -ne "PASS" -and $r.QS.Status -ne "XFAIL") { $show = $true }
         if ($r.VM -and $r.VM.Status -ne "PASS" -and $r.VM.Status -ne "XFAIL") { $show = $true }
@@ -336,6 +353,18 @@ if ($Verbose -or $hasIssues) {
                 }
             }
         }
+    }
+}
+
+if ($nondetResults.Count -gt 0) {
+    Write-Host ""
+    Write-Host "--- Nondeterministic tests (network-dependent, informational only) ---"
+    foreach ($r in $nondetResults) {
+        $line = "  $($r.Dir)/$($r.Name):"
+        if ($r.QS)  { $line += " qs=$($r.QS.Status)" }
+        if ($r.VM)  { $line += " vm=$($r.VM.Status)" }
+        if ($r.QVM) { $line += " qvm=$($r.QVM.Status)" }
+        Write-Host $line
     }
 }
 
