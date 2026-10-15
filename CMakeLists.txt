@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 project(QuantoScript
-    VERSION 0.1.0
+    VERSION 2.0.0
     DESCRIPTION "A small, readable scripting language with a dual execution engine"
     HOMEPAGE_URL "https://github.com/PySudo/QuantoScript"
     LANGUAGES C)

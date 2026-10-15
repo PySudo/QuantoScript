@@ -7,7 +7,7 @@
 Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter, a bytecode VM, and an optional native-C compiler.
 
 [![CI](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml/badge.svg)](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-1.1.3-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.0.0-blue.svg)](CHANGELOG.md)
 [![language](https://img.shields.io/badge/written%20in-C99-00599C.svg)](src/quanto.c)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#building-from-source)
@@ -91,7 +91,7 @@ Then open a new terminal and run `qs --help`.
 
 ```bash
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 1.1.3
+curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 2.0.0
 
 # Custom install prefix (default: ~/.quanto)
 QUANTO_INSTALL="$HOME/.local" curl -fsSL .../install.sh | sh
@@ -107,7 +107,7 @@ curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh
 
 ```powershell
 # Install a specific version
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.1.3
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 2.0.0
 
 # Uninstall
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Uninstall
@@ -298,9 +298,9 @@ gcc -O2 a_native.c -o program_native
 ./program_native
 ```
 
-**Supported:** integer arithmetic, `if`/`else`, `while`, `repeat`, variable assignment,
-`print`.
-**Not supported:** functions, strings, lists, maps, closures, classes, exceptions.
+The native backend covers the whole language: numbers, strings, lists, maps, control
+flow, functions, classes, exceptions, imports, and comprehensions all compile ahead
+of time.
 
 ---
 
@@ -517,11 +517,11 @@ build/              Build output (gitignored)
 
 ## Known Limitations
 
-This is a **v1.1.3** release. The following are known and tracked:
+This is a **v2.0.0** release. The following are known and tracked:
 
 - **Closures** that capture an enclosing function's local variables work in the
-  tree-walk interpreter but not in the bytecode VM, which reports an unknown variable.
-  Nested `func` declarations are not supported.
+  tree-walk interpreter and in native builds, but not in the bytecode VM, which
+  reports an unknown variable. Nested `func` declarations are not supported.
 - **Class method bodies** take one statement per line; semicolon-separated statements
   are not supported.
 - **Return type annotations** are parsed but not yet enforced.

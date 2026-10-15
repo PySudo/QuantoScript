@@ -4,6 +4,26 @@ typedef struct {
     int line;
 } ASTParser;
 
+static int ast_parse_failed = 0;
+static int ast_parse_failed_line = 0;
+static char ast_parse_failed_msg[256] = {0};
+
+static void ast_mark_failed(ASTParser *p) {
+    if (!ast_parse_failed) {
+        ast_parse_failed = 1;
+        ast_parse_failed_line = p->line;
+        ast_parse_failed_msg[0] = '\0';
+    }
+}
+
+static void ast_mark_failed_msg(ASTParser *p, const char *message) {
+    if (!ast_parse_failed) {
+        ast_parse_failed = 1;
+        ast_parse_failed_line = p->line;
+        snprintf(ast_parse_failed_msg, sizeof(ast_parse_failed_msg), "%s", message);
+    }
+}
+
 static void ast_skip(ASTParser *p) {
     while (p->text[p->pos] && (p->text[p->pos] == ' ' || p->text[p->pos] == '\t')) p->pos++;
 }
@@ -316,18 +336,72 @@ static ASTNode *ast_parse_primary(ASTParser *p) {
 
     if (ch == '[') {
         p->pos++;
+        ast_skip(p);
+        if (p->text[p->pos] && p->text[p->pos] != ']') {
+            ASTNode *first = ast_parse_expression(p);
+            ast_skip(p);
+            if (strncmp(p->text + p->pos, "repeat", 6) == 0 &&
+                !ast_is_name_part_char(p->text[p->pos + 6])) {
+                p->pos += 6;
+                ast_skip(p);
+                char *var = NULL;
+                if (p->text[p->pos] == '-' && p->text[p->pos + 1] == '>') {
+                    p->pos += 2;
+                    if (first && first->type == AST_IDENT) {
+                        var = qs_strdup(first->as.string);
+                    } else {
+                        ast_mark_failed_msg(p, "comprehension needs a variable name before '->'");
+                        if (first) ast_free(first);
+                        return NULL;
+                    }
+                } else {
+                    size_t probe = p->pos;
+                    while (ast_is_name_part_char(p->text[probe])) probe++;
+                    size_t probe2 = probe;
+                    while (p->text[probe2] == ' ' || p->text[probe2] == '\t') probe2++;
+                    if (p->text[probe2] == '-' && p->text[probe2 + 1] == '>') {
+                        var = ast_parse_name(p);
+                        ast_skip(p);
+                        p->pos += 2;
+                    } else {
+                        var = qs_strdup("_");
+                    }
+                }
+                if (!var) var = qs_strdup("_");
+                ast_skip(p);
+                ASTNode *iter = ast_parse_expression(p);
+                ast_skip(p);
+                ASTNode *cond = NULL;
+                if (strncmp(p->text + p->pos, "if", 2) == 0 &&
+                    !ast_is_name_part_char(p->text[p->pos + 2])) {
+                    p->pos += 2;
+                    ast_skip(p);
+                    cond = ast_parse_expression(p);
+                    ast_skip(p);
+                }
+                if (p->text[p->pos] == ']') p->pos++;
+                return ast_list_comp(first, var, iter, cond, p->line);
+            }
+            ASTNode *node = ast_new(AST_LIST_LIT, p->line);
+            node->as.list.items = NULL;
+            node->as.list.count = 0;
+            node->as.list.items = realloc(node->as.list.items, sizeof(ASTNode *));
+            node->as.list.items[node->as.list.count++] = first;
+            while (p->text[p->pos] && p->text[p->pos] != ']') {
+                if (p->text[p->pos] == ',') p->pos++;
+                ast_skip(p);
+                if (p->text[p->pos] == ']') break;
+                ASTNode *item = ast_parse_expression(p);
+                node->as.list.items = realloc(node->as.list.items, (node->as.list.count + 1) * sizeof(ASTNode *));
+                node->as.list.items[node->as.list.count++] = item;
+                ast_skip(p);
+            }
+            if (p->text[p->pos] == ']') p->pos++;
+            return node;
+        }
         ASTNode *node = ast_new(AST_LIST_LIT, p->line);
         node->as.list.items = NULL;
         node->as.list.count = 0;
-        ast_skip(p);
-        while (p->text[p->pos] && p->text[p->pos] != ']') {
-            ASTNode *item = ast_parse_expression(p);
-            node->as.list.items = realloc(node->as.list.items, (node->as.list.count + 1) * sizeof(ASTNode *));
-            node->as.list.items[node->as.list.count++] = item;
-            ast_skip(p);
-            if (p->text[p->pos] == ',') p->pos++;
-            ast_skip(p);
-        }
         if (p->text[p->pos] == ']') p->pos++;
         return node;
     }
@@ -452,8 +526,14 @@ static ASTNode *ast_parse_term(ASTParser *p) {
         char opch = p->text[p->pos];
         if (opch == '*' || opch == '/' || opch == '%') {
             p->pos++;
+            ast_skip(p);
+            char nxt = p->text[p->pos];
             ASTNode *right = ast_parse_unary(p);
-            if (!right) { ast_free(left); return NULL; }
+            if (!right) {
+                if (nxt == '*' || nxt == '/' || nxt == '%') ast_mark_failed(p);
+                ast_free(left);
+                return NULL;
+            }
             char ops[2] = {opch, 0};
             left = ast_binary(ast_get_binary_type(ops), left, right, p->line);
         } else break;
@@ -469,8 +549,14 @@ static ASTNode *ast_parse_addition(ASTParser *p) {
         char opch = p->text[p->pos];
         if (opch == '+' || opch == '-') {
             p->pos++;
+            ast_skip(p);
+            char nxt = p->text[p->pos];
             ASTNode *right = ast_parse_term(p);
-            if (!right) { ast_free(left); return NULL; }
+            if (!right) {
+                if (nxt == '+' || nxt == '-' || nxt == '*' || nxt == '/' || nxt == '%') ast_mark_failed(p);
+                ast_free(left);
+                return NULL;
+            }
             char ops[2] = {opch, 0};
             left = ast_binary(ast_get_binary_type(ops), left, right, p->line);
         } else break;
@@ -1404,7 +1490,9 @@ static ASTNode *ast_parse_statement(Program *source, size_t i, size_t end, size_
             int argc = 0;
             ast_skip(&pp);
             while (pp.text[pp.pos] && pp.text[pp.pos] != ')') {
+                size_t before = pp.pos;
                 ASTNode *arg = ast_parse_expression(&pp);
+                if (!arg || pp.pos == before) break;
                 argc++;
                 args = realloc(args, argc * sizeof(ASTNode *));
                 args[argc - 1] = arg;

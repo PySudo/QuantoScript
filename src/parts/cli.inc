@@ -804,6 +804,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  qs lint <file.qs>     check for common issues\n");
             fprintf(stderr, "  qs doc <file.qs>      generate documentation\n");
             fprintf(stderr, "  qs profile <file.qs>  profile function calls\n");
+            fprintf(stderr, "  qs native <file.qs> [--build]  compile to C (a_native.c); --build also produces a binary\n");
             fprintf(stderr, "  qs compile <file.qs> [output]  compile to native binary\n");
             fprintf(stderr, "  qs test [directory]   run *_test.qs files\n");
             fprintf(stderr, "  qs install <url>      install a package\n");
@@ -821,6 +822,7 @@ int main(int argc, char **argv) {
 
     int sandbox = 0;
     int sandbox_path_idx = 0;
+    int native_build_flag = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sandbox") == 0) {
             sandbox = 1;
@@ -830,6 +832,7 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--dump-bytecode") == 0) g_dump_bytecode = 1;
         if (strcmp(argv[i], "--trace") == 0) g_trace_vm = 1;
+        if (strcmp(argv[i], "--build") == 0) native_build_flag = 1;
     }
     if (sandbox) {
         g_sandbox_mode = 1;
@@ -986,7 +989,25 @@ int main(int argc, char **argv) {
             fprintf(stderr, "native requires a .qs file\n");
             return 1;
         }
-        return native_compile(file_arg, "a_native.c");
+        const char *c_path = "a_native.c";
+        int rc = native_compile(file_arg, c_path);
+        if (rc != 0) return rc;
+        if (!native_build_flag) {
+            printf("wrote %s\n", c_path);
+            return 0;
+        }
+        char out_path[1024];
+        const char *base = file_arg;
+        for (const char *p = file_arg; *p; p++) {
+            if (*p == '/' || *p == '\\') base = p + 1;
+        }
+        snprintf(out_path, sizeof(out_path), "%s", base);
+        char *dot = strrchr(out_path, '.');
+        if (dot && strcmp(dot, ".qs") == 0) *dot = '\0';
+#ifdef _WIN32
+        strncat(out_path, ".exe", sizeof(out_path) - strlen(out_path) - 1);
+#endif
+        return native_build_c(c_path, out_path);
     }
     if (cmd && strcmp(cmd, "check") == 0) {
         if (file_arg == NULL) {
@@ -1029,6 +1050,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "  qs lint <file.qs>   check for common issues\n");
     fprintf(stderr, "  qs doc <file.qs>    generate documentation\n");
     fprintf(stderr, "  qs profile <file.qs>  profile function calls\n");
+    fprintf(stderr, "  qs native <file.qs> [--build]  compile to C (a_native.c); --build also produces a binary\n");
     fprintf(stderr, "  qs compile <file.qs> [output]  compile to native binary\n");
     fprintf(stderr, "  qs test [directory]  run *_test.qs files\n");
     fprintf(stderr, "  qs install <github-url>  install a package\n");
@@ -1038,6 +1060,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "  --dump-bytecode    print compiled bytecode to stderr\n");
     fprintf(stderr, "  --trace            print per-instruction VM trace\n");
     fprintf(stderr, "  --sandbox [path]   restrict file access\n");
+    fprintf(stderr, "  --build            with 'qs native', also build the C into a binary\n");
         return 1;
 }
 #endif

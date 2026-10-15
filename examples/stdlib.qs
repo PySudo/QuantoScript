@@ -2,7 +2,7 @@
 
 from "../stdlib/time.qs" import now
 from "../stdlib/text.qs" import lower, upper, trim, split
-from "../stdlib/fs.qs" import exists, write, read
+from "../stdlib/fs.qs" import exists, write, read, remove
 from "../stdlib/math.qs" import min, max, clamp
 
 print("time:", now())
@@ -21,4 +21,7 @@ path = "tmp_qs_test.txt"
 print("written:", write(path, "hello stdlib"))
 print("exists:", exists(path))
 print("read:", read(path))
+
+# Remove the file we created so the example leaves nothing behind.
+remove(path)
 

@@ -457,7 +457,8 @@ static int parse_primary(Parser *parser, Value *out) {
         int in_string = 0;
         char str_quote = '\0';
         int bracket_depth = 0;
-        int found_for = 0;
+        size_t repeat_pos = 0;
+        int found_repeat = 0;
         while (parser->text[scan] && parser->text[scan] != ']') {
             if (in_string) {
                 if (parser->text[scan] == str_quote && quote_can_close(parser->text, scan, ']')) {
@@ -472,42 +473,68 @@ static int parse_primary(Parser *parser, Value *out) {
                 } else if (parser->text[scan] == ']') {
                     if (bracket_depth == 0) break;
                     bracket_depth--;
-                } else if (parser->text[scan] == 'f' && parser->text[scan + 1] == 'o' &&
-                           parser->text[scan + 2] == 'r' && !is_name_part(parser->text[scan + 3])) {
-                    found_for = 1;
+                } else if (bracket_depth == 0 && scan > parser->pos + 1 &&
+                           strncmp(parser->text + scan, "repeat", 6) == 0 &&
+                           !is_name_part(parser->text[scan + 6]) &&
+                           !is_name_part(parser->text[scan - 1]) &&
+                           parser->text[scan - 1] != '.') {
+                    found_repeat = 1;
+                    repeat_pos = scan;
                     break;
                 }
             }
             scan++;
         }
 
-        if (found_for) {
+        if (found_repeat) {
             size_t body_start = parser->pos + 1;
-            size_t for_pos = scan;
-            char *expr_text = qs_strndup(parser->text + body_start, for_pos - body_start);
+            char *expr_text = qs_strndup(parser->text + body_start, repeat_pos - body_start);
 
-            parser->pos = for_pos + 3;
+            parser->pos = repeat_pos + 6;
             skip_spaces(parser);
 
-            char *var_name;
-            if (!parse_name(parser, &var_name)) {
-                free(expr_text);
-                parser_error(parser, "comprehension needs a variable name");
-                return 0;
+            int comp_form = 0;
+            char *var_name = NULL;
+
+            if (parser->text[parser->pos] == '-' && parser->text[parser->pos + 1] == '>') {
+                parser->pos += 2;
+                comp_form = 2;
+            } else if (is_name_start(parser->text[parser->pos])) {
+                size_t probe = parser->pos;
+                while (is_name_part(parser->text[probe])) probe++;
+                size_t probe2 = probe;
+                while (isspace((unsigned char)parser->text[probe2])) probe2++;
+                if (parser->text[probe2] == '-' && parser->text[probe2 + 1] == '>') {
+                    if (!parse_name(parser, &var_name)) {
+                        free(expr_text);
+                        return 0;
+                    }
+                    skip_spaces(parser);
+                    parser->pos += 2;
+                    comp_form = 1;
+                }
             }
 
-            skip_spaces(parser);
-            if (!match_word(parser, "in")) {
-                free(expr_text);
-                free(var_name);
-                parser_error(parser, "comprehension needs 'in'");
-                return 0;
+            if (comp_form == 2) {
+                size_t s = 0, e = strlen(expr_text);
+                while (s < e && isspace((unsigned char)expr_text[s])) s++;
+                while (e > s && isspace((unsigned char)expr_text[e - 1])) e--;
+                int good = e > s && is_name_start(expr_text[s]);
+                for (size_t k = s + 1; good && k < e; k++) {
+                    if (!is_name_part(expr_text[k])) good = 0;
+                }
+                if (!good) {
+                    free(expr_text);
+                    parser_error(parser, "comprehension needs a variable name before '->'");
+                    return 0;
+                }
+                var_name = qs_strndup(expr_text + s, e - s);
             }
 
             Value collection;
             if (!parse_expression(parser, &collection)) {
                 free(expr_text);
-                free(var_name);
+                if (var_name) free(var_name);
                 return 0;
             }
 
@@ -527,7 +554,7 @@ static int parse_primary(Parser *parser, Value *out) {
             skip_spaces(parser);
             if (!match_char(parser, ']')) {
                 free(expr_text);
-                free(var_name);
+                if (var_name) free(var_name);
                 free_value(collection);
                 if (filter_text) free(filter_text);
                 parser_error(parser, "comprehension needs ']'");
@@ -535,29 +562,57 @@ static int parse_primary(Parser *parser, Value *out) {
             }
 
             ValueList result = {0};
-            size_t coll_len = 0;
-            if (collection.type == VALUE_STRING) coll_len = strlen(collection.as.string);
-            else if (collection.type == VALUE_LIST) coll_len = collection.as.list.count;
-            else if (collection.type == VALUE_DICT) coll_len = collection.as.dict.count;
+            int comp_ok = 1;
+            long total = 0;
 
-            for (size_t n = 0; n < coll_len; n++) {
-                if (collection.type == VALUE_STRING) {
-                    char letter[2] = {collection.as.string[n], '\0'};
-                    env_set(parser->env, var_name, make_string_owned(qs_strdup(letter)));
-                } else if (collection.type == VALUE_LIST) {
-                    env_set(parser->env, var_name, clone_value(collection.as.list.items[n]));
-                } else if (collection.type == VALUE_DICT) {
-                    env_set(parser->env, var_name, make_string_owned(qs_strdup(collection.as.dict.items[n].key)));
+            if (comp_form == 0) {
+                if (collection.type != VALUE_INTEGER) {
+                    free(expr_text);
+                    if (var_name) free(var_name);
+                    free_value(collection);
+                    if (filter_text) free(filter_text);
+                    parser_error(parser, "repeat needs a number");
+                    return 0;
+                }
+                total = collection.as.integer;
+            } else if (collection.type == VALUE_STRING) {
+                total = (long)strlen(collection.as.string);
+            } else if (collection.type == VALUE_LIST) {
+                total = (long)collection.as.list.count;
+            } else if (collection.type == VALUE_DICT) {
+                total = (long)collection.as.dict.count;
+            } else if (collection.type == VALUE_INTEGER) {
+                total = collection.as.integer;
+            } else {
+                free(expr_text);
+                if (var_name) free(var_name);
+                free_value(collection);
+                if (filter_text) free(filter_text);
+                parser_error(parser, "repeat item -> value needs a number, string, list, or map");
+                return 0;
+            }
+
+            for (long n = 0; n < total; n++) {
+                if (comp_form != 0) {
+                    if (collection.type == VALUE_INTEGER) {
+                        env_set(parser->env, var_name, make_integer(n + 1));
+                    } else if (collection.type == VALUE_STRING) {
+                        char letter[2] = {collection.as.string[n], '\0'};
+                        env_set(parser->env, var_name, make_string_owned(qs_strdup(letter)));
+                    } else if (collection.type == VALUE_LIST) {
+                        env_set(parser->env, var_name, clone_value(collection.as.list.items[n]));
+                    } else if (collection.type == VALUE_DICT) {
+                        env_set(parser->env, var_name, make_string_owned(qs_strdup(collection.as.dict.items[n].key)));
+                    }
                 }
 
                 if (filter_text) {
                     Value cond;
                     ParseError ferr = {0};
                     if (!eval_expression_text(parser->env, filter_text, strlen(filter_text), parser->line, &cond, &ferr)) {
-                        free(expr_text); free(var_name); free_value(collection);
-                        if (filter_text) free(filter_text);
                         parser_error(parser, ferr.message);
-                        return 0;
+                        comp_ok = 0;
+                        break;
                     }
                     int keep = value_truthy(cond);
                     free_value(cond);
@@ -567,18 +622,23 @@ static int parse_primary(Parser *parser, Value *out) {
                 Value item;
                 ParseError eerr = {0};
                 if (!eval_expression_text(parser->env, expr_text, strlen(expr_text), parser->line, &item, &eerr)) {
-                    free(expr_text); free(var_name); free_value(collection);
-                    if (filter_text) free(filter_text);
                     parser_error(parser, eerr.message);
-                    return 0;
+                    comp_ok = 0;
+                    break;
                 }
                 list_push(&result, item);
             }
 
             free(expr_text);
-            free(var_name);
+            if (var_name) free(var_name);
             free_value(collection);
             if (filter_text) free(filter_text);
+
+            if (!comp_ok) {
+                Value partial = {.type = VALUE_LIST, .as.list = result};
+                free_value(partial);
+                return 0;
+            }
 
             *out = (Value){.type = VALUE_LIST, .as.list = result};
             return 1;

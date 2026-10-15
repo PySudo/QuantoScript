@@ -135,19 +135,32 @@ See [Control Flow](08-control-flow.md) for every iteration form.
 
 ## List comprehensions
 
-A comprehension builds a new list from another collection in one line:
+A comprehension builds a new list from another collection in one line. It
+reuses the `repeat` loop you already know, so it reads like a one-line
+`repeat`:
 
 ```qscript
 nums = [1, 2, 3, 4]
 
-print([x * 2 for x in nums])              # [2, 4, 6, 8]
-print([x for x in nums if x % 2 == 0])    # [2, 4]
-print([c for c in "abc"])                 # ['a', 'b', 'c']
+print([x * 2 repeat x -> nums])              # [2, 4, 6, 8]
+print([x repeat x -> nums if x % 2 == 0])    # [2, 4]
+print([c repeat c -> "abc"])                 # ['a', 'b', 'c']
+print([i repeat i -> 5])                     # [1, 2, 3, 4, 5]
+print([i repeat -> range(3)])                # [1, 2, 3]
+print([0 repeat 3])                          # [0, 0, 0]
 ```
 
-The form is `[expression for item in collection if condition]`; the `if`
-part is optional. The source may be a list, a string (iterated character by
-character), or a map (iterated by key).
+The forms are:
+
+- `[expression repeat item -> collection]` — collect `expression` for each
+  `item` in `collection`.
+- `[expression repeat -> collection]` — when the leading expression is just a
+  name, that name doubles as the loop variable (`[i repeat -> range(3)]`).
+- `[expression repeat count]` — collect `expression` `count` times.
+
+`collection` may be a list, a string (iterated character by character), a map
+(iterated by key), or a number (counting `1` up to it). An optional
+`if condition` at the end filters which items are collected.
 
 ---
 

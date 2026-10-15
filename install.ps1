@@ -11,10 +11,10 @@
         irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1 | iex
 
     Or with options:
-        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 1.1.3
+        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 2.0.0
 
 .PARAMETER Version
-    Version to install (e.g. 1.1.3). Defaults to the latest release.
+    Version to install (e.g. 2.0.0). Defaults to the latest release.
 
 .PARAMETER InstallDir
     Install prefix. Defaults to $env:USERPROFILE\.quanto

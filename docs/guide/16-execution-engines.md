@@ -65,10 +65,10 @@ qs native program.qs        # emit a_native.c
 qs compile program.qs       # emit and compile to a standalone binary
 ```
 
-The native path supports a subset of the language: integer arithmetic,
-`if`/`else`, `while`, `repeat`, variable assignment, and `print`. Functions,
-strings, lists, maps, classes, and exceptions are not supported on this path —
-see [Bytecode and Native Builds](17-bytecode-and-native.md).
+The native path covers the whole language: numbers, strings, lists, maps, control
+flow, functions, classes, exceptions, imports, and comprehensions all lower to C
+and compile ahead of time — see
+[Bytecode and Native Builds](17-bytecode-and-native.md).
 
 ---
 

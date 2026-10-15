@@ -44,16 +44,34 @@ qs vm --dump-bytecode program.qs
 
 ## Compiling to a native binary
 
-The native compiler emits C for a subset of the language, which you can build
-with any C compiler:
+The native compiler lowers the full abstract syntax tree to a self-contained C
+file that embeds the QuantoScript runtime, so the resulting program runs without
+the interpreter or the VM:
 
 ```bash
-qs native program.qs                     # emits a_native.c
-gcc -O2 a_native.c -o program_native     # build it
-./program_native
+qs native program.qs             # emits a_native.c
+qs native program.qs --build     # emits a_native.c and builds program.exe (program on Unix)
+./program
 ```
 
-Or let `qs compile` do both steps:
+Without `--build`, `qs native` only writes the C file. With `--build`, it also
+invokes `gcc` on that file to produce a binary named after the source
+(`program.qs` → `program.exe` on Windows, `program` elsewhere).
+
+You can also build the generated C yourself:
+
+```bash
+gcc -O2 -I <quanto-src> a_native.c -o program_native \
+    -lssl -lcrypto -lws2_32 -lwinhttp -lwininet -lcrypt32 -lbcrypt -lregex
+```
+
+Because `a_native.c` does `#include "quanto.c"`, compile it with the directory
+that holds `quanto.c` on the include path (`-I <quanto-src>`); the link line
+above is the same set of libraries used to build `qs` itself. `--build` locates
+the runtime sources the same way `qs compile` does (next to the binary, under
+`QUANTO_HOME`, or via `QS_SOURCE_DIR`).
+
+If you prefer a single command that always produces a binary:
 
 ```bash
 qs compile program.qs            # writes a.exe (a.out on Unix); pass an output path to change it
@@ -67,16 +85,30 @@ directory that contains `quanto.c`.
 
 ### What the native compiler supports
 
-- Integer arithmetic
-- `if` / `else`
-- `while` and `repeat`
-- Variable assignment
-- `print`
+The native backend covers the whole language:
 
-### What it does not support
+- Integer and float arithmetic, string concatenation, comparison and logic
+- `if` / `elif` / `else`, `while`, counted and collection `repeat`, `break` / `continue`
+- Every variable, list, map, and string operation
+- Functions (including default parameters, `*args`, and `**kwargs`), lambdas,
+  and recursion
+- Classes, fields, methods, and object construction
+- `try` / `oops` exception handling
+- `print` and f-strings
+- Imports
 
-Functions, strings, lists, maps, closures, classes, and exceptions are outside
-the native path. For everything else, run on the interpreter or the bytecode VM.
+Programs that use default parameters, `*args`/`**kwargs`, or keyword arguments
+delegate those calls to the interpreter at run time (the compiler embeds the
+source to build the interpreter's function table), so they behave exactly as
+they do under `qs` and `qs vm`.
+
+### Notes
+
+- The generated C relies on GCC/Clang-style builtins for exception handling
+  (`__builtin_setjmp` / `__builtin_longjmp`), which are stable across
+  optimization levels on MinGW.
+- `qs native` is not part of the `qs`, `qs vm`, and `qs build` execution paths;
+  it is a separate ahead-of-time compilation target.
 
 ---
 

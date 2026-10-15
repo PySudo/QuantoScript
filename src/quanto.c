@@ -18,5 +18,6 @@
 #include "parts/ast_compiler.inc"
 #include "parts/qvm.inc"
 #include "parts/bc_compiler.inc"
+#include "parts/native_runtime.inc"
 #include "parts/native_compiler.inc"
 #include "parts/cli.inc"

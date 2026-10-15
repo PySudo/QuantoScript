@@ -1,12 +1,12 @@
 # package_release.ps1 — Generate release archives for QuantoScript.
 #
 # Usage (from project root):
-#   pwsh -File scripts/package_release.ps1 -Version 1.1.3
+#   pwsh -File scripts/package_release.ps1 -Version 2.0.0
 #
 # Produces (inside dist/):
-#   quantoscript-1.1.3-x86_64-pc-windows-gnu.zip        + .sha256
-#   quantoscript-1.1.3-x86_64-unknown-linux-gnu.tar.gz   + .sha256
-#   quantoscript-1.1.3-x86_64-apple-darwin.tar.gz        + .sha256
+#   quantoscript-2.0.0-x86_64-pc-windows-gnu.zip        + .sha256
+#   quantoscript-2.0.0-x86_64-unknown-linux-gnu.tar.gz   + .sha256
+#   quantoscript-2.0.0-x86_64-apple-darwin.tar.gz        + .sha256
 #
 # Each archive contains exactly one top-level directory:
 #   quantoscript-<ver>-<target>/{bin/qs[.exe], stdlib/, examples/, src/, LICENSE, README.md}

@@ -20,6 +20,7 @@ typedef enum {
     AST_METHOD_CALL,
 
     AST_LIST_LIT,
+    AST_LIST_COMP,
     AST_MAP_LIT,
 
     AST_FSTRING,
@@ -76,6 +77,8 @@ struct ASTNode {
         struct { ASTNode *object; ASTNode *start; ASTNode *end; } slice;
 
         struct { ASTNode **items; int count; } list;
+
+        struct { ASTNode *expr; char *var; ASTNode *iterable; ASTNode *cond; } comp;
 
         struct { ASTNode **keys; ASTNode **vals; int count; } map;
 
@@ -244,6 +247,15 @@ static ASTNode *ast_field_assign(ASTNode *object, char *field, ASTNode *value, i
     return n;
 }
 
+static ASTNode *ast_list_comp(ASTNode *expr, char *var, ASTNode *iterable, ASTNode *cond, int line) {
+    ASTNode *n = ast_new(AST_LIST_COMP, line);
+    n->as.comp.expr = expr;
+    n->as.comp.var = var;
+    n->as.comp.iterable = iterable;
+    n->as.comp.cond = cond;
+    return n;
+}
+
 static void ast_free(ASTNode *n) {
     if (!n) return;
     switch (n->type) {
@@ -301,6 +313,12 @@ static void ast_free(ASTNode *n) {
         case AST_LIST_LIT:
             for (int i = 0; i < n->as.list.count; i++) ast_free(n->as.list.items[i]);
             free(n->as.list.items);
+            break;
+        case AST_LIST_COMP:
+            ast_free(n->as.comp.expr);
+            free(n->as.comp.var);
+            ast_free(n->as.comp.iterable);
+            ast_free(n->as.comp.cond);
             break;
         case AST_MAP_LIT:
             for (int i = 0; i < n->as.map.count; i++) {

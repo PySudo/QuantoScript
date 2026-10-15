@@ -11,7 +11,23 @@ static int compile_file_to_bytecode(const char *path, BytecodeProgram *prog) {
     ParseError ferr = {0};
     collect_functions(program, &ferr);
 
+    ast_parse_failed = 0;
+    ast_parse_failed_line = 0;
+    ast_parse_failed_msg[0] = '\0';
     ASTNode *ast = ast_parse_program(program);
+    if (ast_parse_failed) {
+        if (ast_parse_failed_msg[0] != '\0') {
+            fprintf(stderr, "SyntaxError: %s\n", ast_parse_failed_msg);
+        } else {
+            fprintf(stderr, "SyntaxError: expected a value\n");
+        }
+        ast_parse_failed = 0;
+        ast_parse_failed_line = 0;
+        ast_parse_failed_msg[0] = '\0';
+        if (ast) ast_free(ast);
+        free_program(program); free(program);
+        return 0;
+    }
     if (!ast) {
         fprintf(stderr, "Parse error\n");
         free_program(program); free(program);

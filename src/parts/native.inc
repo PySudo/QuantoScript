@@ -902,9 +902,6 @@ static int ws_tls_init_once(void) {
 }
 
 #if QS_HAVE_POSIX_REGEX
-/* POSIX regex engines have no inline-flag syntax of their own; translate a
-   leading "(?imsx)" group into the equivalent cflags (only "i" maps to a POSIX
-   flag) so a pattern behaves the same on glibc and on libsystre. */
 static const char *regex_translate_flags(const char *pattern, int *cflags) {
     while (pattern[0] == '(' && pattern[1] == '?') {
         const char *close = strchr(pattern + 2, ')');

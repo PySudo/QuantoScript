@@ -2,7 +2,18 @@
 
 All notable changes to QuantoScript will be documented in this file.
 
-## [Unreleased]
+## [2.0.0] - 2026-10-15
+
+### Breaking Changes
+- List comprehensions now use `repeat` syntax instead of `for ... in`: `[expr repeat var -> coll]` (e.g. `[x * 2 repeat x -> nums]`), `[expr repeat -> coll]` where the leading name doubles as the loop variable (e.g. `[i repeat -> range(3)]`), and `[expr repeat count]` (e.g. `[0 repeat 3]`). An optional trailing `if cond` still filters. The collection may be a list, string, map, or number (counting `1`..`N`), matching the `repeat` statement. The old `[expr for var in coll]` form is no longer accepted.
+
+### Features
+- The `qs native` backend now compiles the whole language — numbers, strings, lists, maps, control flow, functions, classes, exceptions, imports, and comprehensions — to C, and the resulting binary behaves like the tree-walk interpreter and the bytecode VM. Previously the native path handled only a small subset (integer arithmetic, `if`/`while`/`repeat`, variable assignment, and `print`).
+
+### Bug Fixes
+- The bytecode VM and `qs native` now implement list comprehensions. The VM previously crashed on them because the AST compiler had no `AST_LIST_COMP` case; the tree-walk interpreter already handled them.
+- A malformed comprehension (for example `[1 * 2 repeat -> 5]`, where the shorthand has no leading name) now reports a clear `SyntaxError: comprehension needs a variable name before '->'` on all three engines instead of crashing or producing garbage.
+- A closing quote immediately before the keyword `if` now ends the string literal (e.g. `[c for c in "abc" if c != "b"]`-style expressions). Previously `if` was missing from the closing-quote continuation list, so a comprehension filter following a string collection swallowed the rest of the line into the string.
 
 ## [1.1.3] — 2026-10-14
 

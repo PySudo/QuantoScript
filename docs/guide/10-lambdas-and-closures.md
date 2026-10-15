@@ -65,13 +65,13 @@ function.
 
 ## Closures and currying
 
-> **Not supported in v1.1.3.** A lambda cannot capture variables from the scope
-> that surrounds it. Attempting to use an outer local inside a lambda does not
-> produce a working closure — the captured name is unavailable. Nested/curried
-> lambdas (`fn(x) -> fn(y) -> ...`) are likewise unsupported.
+> **Partly supported in v2.0.0.** A lambda captures the enclosing local variables
+> in the tree-walk interpreter and in native builds, so simple closures work
+> there. The bytecode VM does not capture outer locals and reports an unknown
+> variable. Nested/curried lambdas (`fn(x) -> fn(y) -> ...`) are not supported on
+> any engine.
 >
-> This is a tracked limitation; see
-> [Style and Limits](20-style-and-limits.md#known-limitations).
+> See [Style and Limits](20-style-and-limits.md#known-limitations).
 
 When you need a reusable callable, define a named `func` instead — see
 [Functions](09-functions.md).

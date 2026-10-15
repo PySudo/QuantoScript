@@ -3,7 +3,7 @@
 # 20. Style and Limits
 
 This final chapter collects the conventions that keep QuantoScript code readable
-and the things a v1.1.3 release does *not* do yet.
+and the things a v2.0.0 release does *not* do yet.
 
 ---
 
@@ -55,23 +55,15 @@ MAX_RETRIES = 3
 
 ## Known limitations
 
-These are tracked limitations of the v1.1.3 release:
+These are tracked limitations of the v2.0.0 release:
 
-- **Closures** do not capture outer variables. An inner `fn` that reads an outer
-  local does not behave as a closure. Use a named `func` instead. See
+- **Closures** capture outer locals in the tree-walk interpreter and in native
+  builds, but not in the bytecode VM, which reports an unknown variable. See
   [Lambdas and Closures](10-lambdas-and-closures.md#closures-and-currying).
 - **Class method bodies** must be written one statement per line. See
   [Classes](11-classes.md).
 - **Return type annotations** are parsed but not enforced at runtime.
 - **`break` and `continue`** should be used inside multi-line loop bodies.
-- **Method chaining on a function's return value** may fail. Assign the
-  intermediate result to a variable first:
-
-  ```qscript
-  parts = text.split(",")
-  print(parts[1])
-  ```
-
 - **Async is experimental.** `stdlib/async.qs` is reliable for a single task, but
   the queue can hang or crash with several tasks. See
   [Standard Library § async](14-standard-library.md#async).
@@ -82,10 +74,10 @@ These are tracked limitations of the v1.1.3 release:
 
 ## Not yet supported
 
-The following features are not implemented in v1.1.3:
+The following features are not implemented in v2.0.0:
 
 - `&&` and `||` (use `and` and `or`)
-- Closures with captured variables
+- Closure capture in the bytecode VM
 - Inheritance (`extends`, `super`) and interfaces
 - Generics, `match` / `switch`, ternary `? :`
 - String interpolation (`$"..."`)

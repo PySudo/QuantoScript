@@ -98,6 +98,8 @@ static void user_func_table_collect(ASTNode *node) {
     }
 }
 
+static int g_comp_counter = 0;
+
 static int g_bc_loop_start = -1;
 static int g_bc_loop_exit = -1;
 static int g_bc_break_jumps[256];
@@ -250,6 +252,63 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
                 astc_compile_expr(node->as.list.items[i], prog);
             }
             emit(prog, OP_BUILD_LIST, make_null(), node->as.list.count, node->line);
+            break;
+        }
+
+        case AST_LIST_COMP: {
+            int id = g_comp_counter++;
+            char res_name[32], it_name[32], ix_name[32];
+            snprintf(res_name, sizeof(res_name), "_comp_r%d", id);
+            snprintf(it_name, sizeof(it_name), "_comp_it%d", id);
+            snprintf(ix_name, sizeof(ix_name), "_comp_i%d", id);
+
+            emit(prog, OP_BUILD_LIST, make_null(), 0, node->line);
+            emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(res_name)), 0, node->line);
+
+            astc_compile_expr(node->as.comp.iterable, prog);
+            emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup("_iter_items")), 1, node->line);
+            emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(it_name)), 0, node->line);
+
+            emit(prog, OP_LOAD_CONST, make_null(), add_constant(prog, make_integer(1)), node->line);
+            emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(ix_name)), 0, node->line);
+
+            int loop_start = prog->count;
+
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(ix_name)), 0, node->line);
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(it_name)), 0, node->line);
+            emit(prog, OP_CALL_FUNC, make_string_owned(qs_strdup("len")), 1, node->line);
+            emit(prog, OP_LESS_EQUAL, make_null(), 0, node->line);
+            int jump_end = prog->count;
+            emit(prog, OP_JUMP_IF_FALSE, make_null(), 0, node->line);
+
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(it_name)), 0, node->line);
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(ix_name)), 0, node->line);
+            emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
+            emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.comp.var)), 0, node->line);
+
+            int jump_skip = -1;
+            if (node->as.comp.cond) {
+                astc_compile_expr(node->as.comp.cond, prog);
+                jump_skip = prog->count;
+                emit(prog, OP_JUMP_IF_FALSE, make_null(), 0, node->line);
+            }
+
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(res_name)), 0, node->line);
+            astc_compile_expr(node->as.comp.expr, prog);
+            emit(prog, OP_CALL_METHOD, make_string_owned(qs_strdup("append")), 1, node->line);
+            emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(res_name)), 0, node->line);
+
+            if (jump_skip >= 0) prog->instructions[jump_skip].arg_i = prog->count;
+
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(ix_name)), 0, node->line);
+            emit(prog, OP_LOAD_CONST, make_null(), add_constant(prog, make_integer(1)), node->line);
+            emit(prog, OP_ADD, make_null(), 0, node->line);
+            emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(ix_name)), 0, node->line);
+
+            emit(prog, OP_JUMP, make_null(), loop_start, node->line);
+            prog->instructions[jump_end].arg_i = prog->count;
+
+            emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(res_name)), 0, node->line);
             break;
         }
 
@@ -786,6 +845,7 @@ static void astc_compile_block(ASTNode *block, BytecodeProgram *prog) {
 
 static void astc_compile_program(ASTNode *program, BytecodeProgram *prog) {
     locals_init();
+    g_comp_counter = 0;
     astc_compile_block(program, prog);
     emit(prog, OP_HALT, make_null(), 0, 0);
     g_top_level_slots = g_next_slot;

@@ -78,3 +78,21 @@ print("list ne:", [1, 2] == [1, 3])
 
 # len() returns the number of items.
 print("length:", len([10, 20, 30]))
+
+# A list comprehension builds a new list in one line.
+# It reuses the repeat loop: [expression repeat item -> collection].
+squares = [x * x repeat x -> [1, 2, 3, 4, 5]]
+print("comprehension squares:", squares)
+
+# An optional if filter keeps only the items that match.
+even_squares = [x * x repeat x -> [1, 2, 3, 4, 5] if x % 2 == 0]
+print("comprehension even squares:", even_squares)
+
+# The collection can be a string (iterated character by character) ...
+print("comprehension over string:", [c repeat c -> "abc"])
+
+# ... or a number, which counts from 1 up to it.
+print("comprehension over count:", [i repeat i -> 4])
+
+# When the leading expression is just a name, that name is the loop variable.
+print("comprehension shorthand:", [i repeat -> range(3)])

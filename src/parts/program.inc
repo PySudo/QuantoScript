@@ -317,6 +317,7 @@ static int quote_can_close(const char *text, size_t quote_pos, char list_end) {
     return text[pos] == '\0' || text[pos] == '#' || text[pos] == ',' || text[pos] == ':' ||
            text[pos] == list_end || text[pos] == ')' || text[pos] == '{' || text[pos] == '[' || text[pos] == '}' || text[pos] == '.' ||
            (strncmp(text + pos, "in", 2) == 0 && !is_name_part(text[pos + 2])) ||
+           (strncmp(text + pos, "if", 2) == 0 && !is_name_part(text[pos + 2])) ||
            (strncmp(text + pos, "import", 6) == 0 && !is_name_part(text[pos + 6])) ||
            (strncmp(text + pos, "and", 3) == 0 && !is_name_part(text[pos + 3])) ||
            (strncmp(text + pos, "or", 2) == 0 && !is_name_part(text[pos + 2])) ||
