@@ -7,7 +7,7 @@
 Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter, a bytecode VM, and an optional native-C compiler.
 
 [![CI](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml/badge.svg)](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-2.0.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.0.1-blue.svg)](CHANGELOG.md)
 [![language](https://img.shields.io/badge/written%20in-C99-00599C.svg)](src/quanto.c)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#building-from-source)
@@ -91,7 +91,7 @@ Then open a new terminal and run `qs --help`.
 
 ```bash
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 2.0.0
+curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 2.0.1
 
 # Custom install prefix (default: ~/.quanto)
 QUANTO_INSTALL="$HOME/.local" curl -fsSL .../install.sh | sh
@@ -107,7 +107,7 @@ curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh
 
 ```powershell
 # Install a specific version
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 2.0.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 2.0.1
 
 # Uninstall
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Uninstall
@@ -517,7 +517,7 @@ build/              Build output (gitignored)
 
 ## Known Limitations
 
-This is a **v2.0.0** release. The following are known and tracked:
+This is a **v2.0.1** release. The following are known and tracked:
 
 - **Closures** that capture an enclosing function's local variables work in the
   tree-walk interpreter and in native builds, but not in the bytecode VM, which

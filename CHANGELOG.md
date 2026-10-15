@@ -4,7 +4,12 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-16
+
 ### Bug Fixes
+- The interpreter now evaluates every term of an additive expression. A `+`/`-` chain with more than two operands (for example `1 + 2 + 3`) previously stopped after the first operator on the tree-walk interpreter, which then mis-reported the line as a syntax error; the bytecode VM and `qs native` were already correct, and now all three engines agree.
+- Released archives now include the C runtime sources (`src/`), so `qs native` and `qs compile` work from a fresh install. The release package previously omitted `src/`, causing `qs native` to fall back to a stale or missing runtime directory and fail with undeclared-symbol errors.
+- `qs native`/`qs compile` now validate a discovered runtime directory before using it: it must contain both `quanto.c` and `src/parts/native_runtime.inc`. A mismatched directory (for example a leftover `src` copy) is skipped in favour of a valid one, and when none is found the error explains how to point at the sources with `QS_SOURCE_DIR`.
 - The regression runner no longer fails on tests that depend on external services (the live HTTP and WebSocket examples). Those tests are listed in `tests/nondeterministic_tests.txt` and reported separately, so intermittent third-party server errors no longer break CI.
 
 ## [2.0.0] - 2026-10-15
