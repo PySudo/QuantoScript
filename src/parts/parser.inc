@@ -2265,7 +2265,7 @@ static int parse_term(Parser *parser, Value *out) {
             free_value(right);
             *out = make_integer(result);
         }
-        return 1;
+        continue;
     }
     return 1;
 }
