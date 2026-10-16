@@ -462,7 +462,7 @@ static QS_UNUSED_FN Value qs_slice(Value obj, Value start, Value end) {
         for (long i = s; i < e; i++) {
             list_push(&list, clone_value(obj.as.list.items[i]));
         }
-        Value result;
+        Value result = {0};
         result.type = VALUE_LIST;
         result.as.list = list;
         free_value(obj);

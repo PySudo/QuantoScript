@@ -26,6 +26,63 @@ static int cg_in_func = 0;
 static char *cg_loop_save[128];
 static int cg_loop_top = 0;
 
+#define CG_MAX_CONSTS 1024
+typedef struct {
+    char *name;
+    Value value;
+} CgConstVar;
+static CgConstVar cg_consts[CG_MAX_CONSTS];
+static int cg_const_count = 0;
+
+static void cg_const_clear_all(void) {
+    for (int i = 0; i < cg_const_count; i++) {
+        free(cg_consts[i].name);
+        free_value(cg_consts[i].value);
+    }
+    cg_const_count = 0;
+}
+
+static void cg_const_clear(const char *name) {
+    if (!name) return;
+    for (int i = 0; i < cg_const_count; i++) {
+        if (strcmp(cg_consts[i].name, name) == 0) {
+            free(cg_consts[i].name);
+            free_value(cg_consts[i].value);
+            cg_consts[i] = cg_consts[cg_const_count - 1];
+            cg_const_count--;
+            return;
+        }
+    }
+}
+
+static void cg_const_set(const char *name, Value value) {
+    if (!name) { free_value(value); return; }
+    for (int i = 0; i < cg_const_count; i++) {
+        if (strcmp(cg_consts[i].name, name) == 0) {
+            free_value(cg_consts[i].value);
+            cg_consts[i].value = value;
+            return;
+        }
+    }
+    if (cg_const_count < CG_MAX_CONSTS) {
+        cg_consts[cg_const_count].name = qs_strdup(name);
+        cg_consts[cg_const_count].value = value;
+        cg_const_count++;
+    } else {
+        free_value(value);
+    }
+}
+
+static Value *cg_const_get(const char *name) {
+    if (!name) return NULL;
+    for (int i = 0; i < cg_const_count; i++) {
+        if (strcmp(cg_consts[i].name, name) == 0) return &cg_consts[i].value;
+    }
+    return NULL;
+}
+
+static void cg_invalidate_assignments(ASTNode *node);
+
 static void cg_stmt(ASTNode *node);
 static void cg_block(ASTNode *block);
 static char *cg_expr(ASTNode *node);
@@ -303,6 +360,7 @@ static char *cg_call_expr(ASTNode *node) {
     char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
     for (int i = 0; i < argc; i++) temps[i] = cg_expr(node->as.call.args[i]);
 
+    cg_const_clear_all();
     char *t = cg_newtemp();
     if (cg_is_class(node->as.call.name)) {
         cg_emit("    Value %s = qs_new(env, ", t);
@@ -327,6 +385,8 @@ static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args,
     char *obj = cg_expr(object);
     char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
     for (int i = 0; i < argc; i++) temps[i] = cg_expr(args[i]);
+
+    cg_const_clear_all();
     char *t = cg_newtemp();
     cg_emit("    Value %s = qs_method_call(env, %s, ", t, obj);
     write_c_string(cg_out, method);
@@ -337,8 +397,393 @@ static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args,
     return t;
 }
 
+static int cg_is_pure_builtin(const char *name) {
+    if (!name) return 0;
+    static const char *pure[] = {
+        "type", "abs", "len", "isinstance", "str", "morph",
+        "range", "pow", "sqrt", "sin", "cos", "tan",
+        "log", "log2", "log10", "ceil", "floor",
+        "_iter_items", "_iter_items2", NULL
+    };
+    for (int i = 0; pure[i]; i++) {
+        if (strcmp(name, pure[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+#define CG_MAX_FOLD_ELEMS 256
+#define CG_MAX_FOLD_STR 8192
+
+static int cg_value_small(Value v) {
+    if (v.type == VALUE_STRING) {
+        return !v.as.string || strlen(v.as.string) <= CG_MAX_FOLD_STR;
+    }
+    if (v.type == VALUE_LIST) {
+        if (v.as.list.count > CG_MAX_FOLD_ELEMS) return 0;
+        for (size_t i = 0; i < v.as.list.count; i++) {
+            if (!cg_value_small(v.as.list.items[i])) return 0;
+        }
+        return 1;
+    }
+    if (v.type == VALUE_DICT) {
+        if (v.as.dict.count > CG_MAX_FOLD_ELEMS) return 0;
+        for (size_t i = 0; i < v.as.dict.count; i++) {
+            if (v.as.dict.items[i].key &&
+                strlen(v.as.dict.items[i].key) > CG_MAX_FOLD_STR) return 0;
+            if (!cg_value_small(v.as.dict.items[i].value)) return 0;
+        }
+        return 1;
+    }
+    return 1;
+}
+
+static int cg_value_finite(Value v) {
+    if (v.type == VALUE_FLOAT) {
+        return isfinite(v.as.floating);
+    }
+    if (v.type == VALUE_LIST) {
+        for (size_t i = 0; i < v.as.list.count; i++) {
+            if (!cg_value_finite(v.as.list.items[i])) return 0;
+        }
+    } else if (v.type == VALUE_DICT) {
+        for (size_t i = 0; i < v.as.dict.count; i++) {
+            if (!cg_value_finite(v.as.dict.items[i].value)) return 0;
+        }
+    }
+    return 1;
+}
+
+static int cg_runtime_index(Value obj, Value key, Value *out) {
+    QsTryFrame frame;
+    if (QS_TRY_SET(&frame) == 0) {
+        qs_push_try(&frame);
+        Value r = qs_index(obj, key);
+        qs_pop_try();
+        *out = r;
+        return 1;
+    }
+    return 0;
+}
+
+static void cg_emit_value_literal(char *t, Value v);
+
+static char *cg_const_value_temp(Value v) {
+    char *t = cg_newtemp();
+    cg_emit_value_literal(t, v);
+    return t;
+}
+
+static void cg_emit_value_literal(char *t, Value v) {
+    switch (v.type) {
+        case VALUE_INTEGER:
+            cg_emit("    Value %s = make_integer(%ldL);\n", t, v.as.integer);
+            break;
+        case VALUE_FLOAT:
+            cg_emit("    Value %s = make_float(%.17g);\n", t, v.as.floating);
+            break;
+        case VALUE_BOOL:
+            cg_emit("    Value %s = make_bool(%d);\n", t, v.as.boolean ? 1 : 0);
+            break;
+        case VALUE_STRING:
+            cg_emit("    Value %s = make_string_owned(qs_strdup(", t);
+            write_c_string(cg_out, v.as.string ? v.as.string : "");
+            cg_emit("));\n");
+            break;
+        case VALUE_LIST:
+            cg_emit("    Value %s = make_list_empty();\n", t);
+            for (size_t i = 0; i < v.as.list.count; i++) {
+                char *item = cg_const_value_temp(v.as.list.items[i]);
+                cg_emit("    list_push(&%s.as.list, %s);\n", t, item);
+                free(item);
+            }
+            break;
+        case VALUE_DICT:
+            cg_emit("    Value %s = make_dict_empty();\n", t);
+            for (size_t i = 0; i < v.as.dict.count; i++) {
+                char *val = cg_const_value_temp(v.as.dict.items[i].value);
+                cg_emit("    dict_set(&%s.as.dict, ", t);
+                write_c_string(cg_out, v.as.dict.items[i].key);
+                cg_emit(", %s);\n", val);
+                free(val);
+            }
+            break;
+        case VALUE_NULL:
+        default:
+            cg_emit("    Value %s = make_null();\n", t);
+            break;
+    }
+}
+
+static int cg_const_eval(ASTNode *node, Value *out) {
+    if (!node) return 0;
+    switch (node->type) {
+        case AST_INT_LIT:
+            *out = make_integer(node->as.integer);
+            return 1;
+        case AST_FLOAT_LIT:
+            *out = make_float(node->as.floating);
+            return 1;
+        case AST_STR_LIT:
+            *out = make_string_owned(qs_strdup(node->as.string ? node->as.string : ""));
+            return 1;
+        case AST_BOOL_LIT:
+            *out = make_bool(node->as.boolean ? 1 : 0);
+            return 1;
+        case AST_NULL_LIT:
+            *out = make_null();
+            return 1;
+        case AST_UNARY_NEG: {
+            Value v;
+            if (!cg_const_eval(node->as.unary.operand, &v)) return 0;
+            *out = qs_neg(v);
+            return 1;
+        }
+        case AST_UNARY_NOT: {
+            Value v;
+            if (!cg_const_eval(node->as.unary.operand, &v)) return 0;
+            *out = qs_not(v);
+            return 1;
+        }
+        case AST_BINARY_ADD:
+        case AST_BINARY_SUB:
+        case AST_BINARY_MUL: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            if (node->type == AST_BINARY_ADD) *out = qs_add(l, r);
+            else if (node->type == AST_BINARY_SUB) *out = qs_sub(l, r);
+            else *out = qs_mul(l, r);
+            return 1;
+        }
+        case AST_BINARY_DIV:
+        case AST_BINARY_MOD: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            int numeric = (l.type == VALUE_INTEGER || l.type == VALUE_FLOAT) &&
+                          (r.type == VALUE_INTEGER || r.type == VALUE_FLOAT);
+            int is_float = (l.type == VALUE_FLOAT || r.type == VALUE_FLOAT);
+            if (!numeric || (!is_float && r.as.integer == 0)) {
+                free_value(l);
+                free_value(r);
+                return 0;
+            }
+            *out = (node->type == AST_BINARY_DIV) ? qs_div(l, r) : qs_mod(l, r);
+            return 1;
+        }
+        case AST_BINARY_EQ:
+        case AST_BINARY_NEQ: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            *out = (node->type == AST_BINARY_EQ) ? qs_eq(l, r) : qs_neq(l, r);
+            return 1;
+        }
+        case AST_BINARY_LT:
+        case AST_BINARY_GT:
+        case AST_BINARY_LTE:
+        case AST_BINARY_GTE: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            int ln = (l.type == VALUE_INTEGER || l.type == VALUE_FLOAT);
+            int rn = (r.type == VALUE_INTEGER || r.type == VALUE_FLOAT);
+            if (!ln || !rn) { free_value(l); free_value(r); return 0; }
+            if (node->type == AST_BINARY_LT) *out = qs_lt(l, r);
+            else if (node->type == AST_BINARY_GT) *out = qs_gt(l, r);
+            else if (node->type == AST_BINARY_LTE) *out = qs_lte(l, r);
+            else *out = qs_gte(l, r);
+            return 1;
+        }
+        case AST_BINARY_AND:
+        case AST_BINARY_OR: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            int lt = qs_truthy(l);
+            int rt = qs_truthy(r);
+            free_value(l);
+            free_value(r);
+            *out = make_bool(node->type == AST_BINARY_AND ? (lt && rt) : (lt || rt));
+            return 1;
+        }
+        case AST_BINARY_IN: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            *out = qs_in(l, r);
+            return 1;
+        }
+        case AST_LIST_LIT: {
+            Value list = make_list_empty();
+            for (int i = 0; i < node->as.list.count; i++) {
+                Value item;
+                if (!cg_const_eval(node->as.list.items[i], &item)) {
+                    free_value(list);
+                    return 0;
+                }
+                list_push(&list.as.list, item);
+            }
+            if (!cg_value_small(list)) { free_value(list); return 0; }
+            *out = list;
+            return 1;
+        }
+        case AST_MAP_LIT: {
+            Value dict = make_dict_empty();
+            for (int i = 0; i < node->as.map.count; i++) {
+                Value kv, vv;
+                if (!cg_const_eval(node->as.map.keys[i], &kv)) {
+                    free_value(dict);
+                    return 0;
+                }
+                if (!cg_const_eval(node->as.map.vals[i], &vv)) {
+                    free_value(kv);
+                    free_value(dict);
+                    return 0;
+                }
+                char *ks = value_to_string(kv);
+                free_value(kv);
+                dict_set(&dict.as.dict, ks, vv);
+                free(ks);
+            }
+            if (!cg_value_small(dict)) { free_value(dict); return 0; }
+            *out = dict;
+            return 1;
+        }
+        case AST_INDEX: {
+            Value obj, key;
+            if (!cg_const_eval(node->as.index.object, &obj)) return 0;
+            if (!cg_const_eval(node->as.index.key, &key)) { free_value(obj); return 0; }
+            Value res;
+            if (!cg_runtime_index(obj, key, &res)) return 0;
+            if (!cg_value_small(res)) { free_value(res); return 0; }
+            *out = res;
+            return 1;
+        }
+        case AST_SLICE: {
+            Value obj, start, end;
+            if (!cg_const_eval(node->as.slice.object, &obj)) return 0;
+            if (node->as.slice.start) {
+                if (!cg_const_eval(node->as.slice.start, &start)) { free_value(obj); return 0; }
+            } else {
+                start = make_integer(0);
+            }
+            if (node->as.slice.end) {
+                if (!cg_const_eval(node->as.slice.end, &end)) {
+                    free_value(obj);
+                    free_value(start);
+                    return 0;
+                }
+            } else {
+                end = make_null();
+            }
+            Value res = qs_slice(obj, start, end);
+            if (!cg_value_small(res)) { free_value(res); return 0; }
+            *out = res;
+            return 1;
+        }
+        case AST_FSTRING: {
+            int n = node->as.fstring.count;
+            if (n <= 0) { *out = make_string_owned(qs_strdup("")); return 1; }
+            Value *parts = malloc((size_t)n * sizeof(Value));
+            int ok = 1;
+            for (int i = 0; i < n; i++) {
+                if (!cg_const_eval(node->as.fstring.parts[i], &parts[i])) {
+                    for (int j = 0; j < i; j++) free_value(parts[j]);
+                    ok = 0;
+                    break;
+                }
+            }
+            if (!ok) { free(parts); return 0; }
+            Value res = qs_concat_strings(n, parts);
+            free(parts);
+            if (!cg_value_small(res)) { free_value(res); return 0; }
+            *out = res;
+            return 1;
+        }
+        case AST_CALL: {
+            if (!cg_is_pure_builtin(node->as.call.name)) return 0;
+            if (cg_is_class(node->as.call.name)) return 0;
+            if (node->as.call.arg_names) {
+                for (int i = 0; i < node->as.call.argc; i++) {
+                    if (node->as.call.arg_names[i]) return 0;
+                }
+            }
+            int argc = node->as.call.argc;
+            CallArgList cargs = {0};
+            cargs.count = (size_t)argc;
+            cargs.capacity = (size_t)argc;
+            cargs.items = argc > 0 ? calloc((size_t)argc, sizeof(CallArg)) : NULL;
+            int ok = 1;
+            for (int i = 0; i < argc; i++) {
+                if (!cg_const_eval(node->as.call.args[i], &cargs.items[i].value)) {
+                    ok = 0;
+                    break;
+                }
+            }
+            if (!ok) {
+                free_call_args(&cargs);
+                return 0;
+            }
+            if (strcmp(node->as.call.name, "range") == 0 && argc >= 1 && argc <= 3) {
+                int allint = 1;
+                for (int i = 0; i < argc; i++) {
+                    if (cargs.items[i].value.type != VALUE_INTEGER) { allint = 0; break; }
+                }
+                if (allint) {
+                    long start = 1, stop = 0, step = 1, span = 0;
+                    if (argc == 1) {
+                        stop = cargs.items[0].value.as.integer;
+                    } else {
+                        start = cargs.items[0].value.as.integer;
+                        stop = cargs.items[1].value.as.integer;
+                        if (argc == 3) step = cargs.items[2].value.as.integer;
+                    }
+                    if (step > 0) span = stop >= start ? (stop - start) / step + 1 : 0;
+                    else if (step < 0) span = start >= stop ? (start - stop) / (-step) + 1 : 0;
+                    if (span > CG_MAX_FOLD_ELEMS) {
+                        free_call_args(&cargs);
+                        return 0;
+                    }
+                }
+            }
+            ParseError perr = {0};
+            Parser bparser = {"", 0, 0, NULL, &perr, -1};
+            Value res = make_null();
+            int built = call_builtin(&bparser, node->as.call.name, &cargs, &res);
+            free_call_args(&cargs);
+            if (!built) { free_value(res); return 0; }
+            if (!cg_value_small(res)) { free_value(res); return 0; }
+            *out = res;
+            return 1;
+        }
+        case AST_IDENT: {
+            Value *cv = cg_const_get(node->as.string);
+            if (!cv) return 0;
+            *out = clone_value(*cv);
+            return 1;
+        }
+        default:
+            return 0;
+    }
+}
+
 static char *cg_expr(ASTNode *node) {
     if (!node) return cg_emit_null();
+
+    {
+        Value folded;
+        if (cg_const_eval(node, &folded)) {
+            if (!cg_value_finite(folded)) {
+                free_value(folded);
+            } else {
+                char *t = cg_newtemp();
+                cg_emit_value_literal(t, folded);
+                free_value(folded);
+                return t;
+            }
+        }
+    }
 
     switch (node->type) {
         case AST_INT_LIT: {
@@ -490,6 +935,40 @@ static int cg_is_mutating_method(const char *m) {
            strcmp(m, "fill") == 0 || strcmp(m, "splice") == 0;
 }
 
+static void cg_invalidate_assignments(ASTNode *node) {
+    if (!node) return;
+    switch (node->type) {
+        case AST_ASSIGN:
+            cg_const_clear(node->as.assign.name);
+            break;
+        case AST_BLOCK:
+        case AST_PROGRAM:
+            for (int i = 0; i < node->as.block.count; i++)
+                cg_invalidate_assignments(node->as.block.stmts[i]);
+            break;
+        case AST_IF:
+            cg_invalidate_assignments(node->as.if_stmt.then_body);
+            cg_invalidate_assignments(node->as.if_stmt.elif_branch);
+            cg_invalidate_assignments(node->as.if_stmt.else_body);
+            break;
+        case AST_WHILE:
+            cg_invalidate_assignments(node->as.while_stmt.body);
+            break;
+        case AST_REPEAT:
+            if (node->as.repeat.var_name) cg_const_clear(node->as.repeat.var_name);
+            if (node->as.repeat.index_name) cg_const_clear(node->as.repeat.index_name);
+            cg_invalidate_assignments(node->as.repeat.body);
+            break;
+        case AST_TRY:
+            cg_invalidate_assignments(node->as.try_stmt.try_body);
+            if (node->as.try_stmt.err_var) cg_const_clear(node->as.try_stmt.err_var);
+            cg_invalidate_assignments(node->as.try_stmt.oops_body);
+            break;
+        default:
+            break;
+    }
+}
+
 static void cg_assign(ASTNode *node) {
     const char *name = node->as.assign.name;
     char op = node->as.assign.op;
@@ -507,6 +986,13 @@ static void cg_assign(ASTNode *node) {
         char *res = cg_newtemp();
         cg_emit("    Value %s = %s(%s, %s);\n", res, fn, cur, value);
         value = res;
+    }
+    if (op == '=') {
+        Value cv;
+        if (cg_const_eval(node->as.assign.value, &cv)) cg_const_set(name, cv);
+        else cg_const_clear(name);
+    } else {
+        cg_const_clear(name);
     }
     cg_emit("    qs_set(env, &local, ");
     write_c_string(cg_out, name);
@@ -534,6 +1020,7 @@ static void cg_print(ASTNode *node) {
 
 static void cg_if(ASTNode *node) {
     char *cond = cg_expr(node->as.if_stmt.cond);
+    cg_invalidate_assignments(node);
     cg_emit("    if (qs_truthy(%s)) {\n", cond);
     cg_block(node->as.if_stmt.then_body);
     cg_emit("    }\n");
@@ -546,9 +1033,11 @@ static void cg_if(ASTNode *node) {
         cg_block(node->as.if_stmt.else_body);
         cg_emit("    }\n");
     }
+    cg_invalidate_assignments(node);
 }
 
 static void cg_while(ASTNode *node) {
+    cg_invalidate_assignments(node);
     char *save = cg_label_name("qsLtry");
     cg_emit("    { int %s = g_qs_try_top;\n", save);
     cg_loop_save[cg_loop_top++] = save;
@@ -559,9 +1048,11 @@ static void cg_while(ASTNode *node) {
     cg_emit("    }\n");
     cg_loop_top--;
     cg_emit("    }\n");
+    cg_invalidate_assignments(node);
 }
 
 static void cg_repeat(ASTNode *node) {
+    cg_invalidate_assignments(node);
     char *save = cg_label_name("qsLtry");
     int id = cg_loop++;
     cg_emit("    { int %s = g_qs_try_top;\n", save);
@@ -600,9 +1091,11 @@ static void cg_repeat(ASTNode *node) {
 
     cg_loop_top--;
     cg_emit("    }\n");
+    cg_invalidate_assignments(node);
 }
 
 static void cg_try(ASTNode *node) {
+    cg_invalidate_assignments(node);
     int id = cg_loop++;
     cg_emit("    { QsTryFrame qs_try%d;\n", id);
     cg_emit("      if (QS_TRY_SET(&qs_try%d) == 0) {\n", id);
@@ -622,6 +1115,7 @@ static void cg_try(ASTNode *node) {
     cg_emit("      }\n");
     cg_emit("    qs_try_done%d: ;\n", id);
     cg_emit("    }\n");
+    cg_invalidate_assignments(node);
 }
 
 static void cg_expr_stmt(ASTNode *node) {
@@ -760,6 +1254,7 @@ static void cg_emit_func(CgFunc *f) {
     int saved_in_func = cg_in_func;
     cg_in_func = 1;
     cg_loop_top = 0;
+    cg_const_clear_all();
     cg_block(f->body);
     cg_loop_top = saved_loop_top;
     cg_in_func = saved_in_func;
@@ -815,6 +1310,7 @@ static int native_compile(const char *input_path, const char *output_path) {
     cg_loop = 0;
     cg_loop_top = 0;
     cg_in_func = 0;
+    cg_const_clear_all();
     cg_collect(ast);
 
     FILE *out = fopen(output_path, "w");
@@ -945,6 +1441,7 @@ static int native_compile(const char *input_path, const char *output_path) {
     for (int i = 0; i < cg_class_count; i++) free(cg_classes[i]);
     cg_func_count = 0;
     cg_class_count = 0;
+    cg_const_clear_all();
 
     ast_free(ast);
     free_program(&program);
