@@ -4,6 +4,25 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-20
+
+### Features
+- `qs native` now promotes script variables that provably hold only integers to bare C `long` locals. Loops such as `i = i + 1` compile to a register increment instead of a string-keyed environment lookup plus boxed-value arithmetic, which makes integer-heavy programs several times faster.
+- `qs native` emits an integer-only variant of every function whose parameters and body are entirely integer. Calls made in integer context go straight to the `long` variant, skipping the boxed calling convention. Recursive integer code such as `fib` benefits the most.
+- `s += expr` on a string now appends into the existing buffer instead of cloning the left side, concatenating, and storing the result. Building a large string in a loop is no longer quadratic.
+- `list.append` takes a fast path in `qs native` that pushes the argument directly, and variable assignment does a single name lookup instead of two.
+
+### Bug Fixes
+- In-place method calls (`xs.append(x)`, `xs.sort()`, …) now write the result back only when the receiver is a plain variable. Previously a receiver such as `f().items` or `xs[0]` could overwrite an unrelated variable.
+- The bytecode VM now writes back in-place method results for calls that are part of a larger expression, not only for bare statement calls, matching the interpreter and `qs native`.
+- Calling a mutating method on a definition (for example `MAX.append(1)`) now reports the standard `definition '…' already exists and cannot be changed` error on the bytecode VM as well.
+
+### Performance
+- `fib(30)`: 42.7 ms vs 354.6 ms for CPython (8.3×).
+- Tight integer loop: 41.0 ms vs 1128 ms for CPython (27.5×).
+- String building: 141.3 ms vs 158.4 ms (1.12×).
+- List appends: 208.3 ms vs 219.5 ms (1.05×).
+
 ## [2.0.1] - 2026-10-16
 
 ### Bug Fixes

@@ -1,5 +1,5 @@
 #ifndef QS_VERSION
-#define QS_VERSION "2.0.1"
+#define QS_VERSION "2.1.0"
 #endif
 
 typedef enum {
