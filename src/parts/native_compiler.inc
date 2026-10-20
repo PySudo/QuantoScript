@@ -81,12 +81,749 @@ static Value *cg_const_get(const char *name) {
     return NULL;
 }
 
+#define CG_MAX_READS 8192
+static char *cg_reads[CG_MAX_READS];
+static int cg_read_count = 0;
+static int cg_reads_overflow = 0;
+static int cg_dse = 0;
+static int cg_has_import = 0;
+static int cg_has_lambda = 0;
+
+static void cg_mark_read(const char *name) {
+    if (!name || !name[0]) return;
+    for (int i = 0; i < cg_read_count; i++) {
+        if (strcmp(cg_reads[i], name) == 0) return;
+    }
+    if (cg_read_count >= CG_MAX_READS) {
+        cg_reads_overflow = 1;
+        return;
+    }
+    cg_reads[cg_read_count++] = qs_strdup(name);
+}
+
+static int cg_is_read(const char *name) {
+    if (cg_reads_overflow) return 1;
+    if (!name) return 1;
+    for (int i = 0; i < cg_read_count; i++) {
+        if (strcmp(cg_reads[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static void cg_free_reads(void) {
+    for (int i = 0; i < cg_read_count; i++) free(cg_reads[i]);
+    cg_read_count = 0;
+    cg_reads_overflow = 0;
+}
+
+#define CG_MAX_PROMO 256
+static char *cg_promo[CG_MAX_PROMO];
+static int cg_promo_count = 0;
+static int cg_int_enabled = 0;
+static int cg_is_class(const char *name);
+static int cg_find_int_func(const char *name);
+
+static int cg_promo_find(const char *name) {
+    if (!name) return -1;
+    for (int i = 0; i < cg_promo_count; i++) {
+        if (strcmp(cg_promo[i], name) == 0) return i;
+    }
+    return -1;
+}
+
+static int cg_is_promo(const char *name) {
+    return cg_int_enabled && cg_promo_find(name) >= 0;
+}
+
+static void cg_promo_add(const char *name) {
+    if (!name || !name[0]) return;
+    if (cg_promo_find(name) >= 0) return;
+    if (cg_promo_count < CG_MAX_PROMO) cg_promo[cg_promo_count++] = qs_strdup(name);
+}
+
+static void cg_promo_remove(const char *name) {
+    int i = cg_promo_find(name);
+    if (i < 0) return;
+    free(cg_promo[i]);
+    cg_promo[i] = cg_promo[cg_promo_count - 1];
+    cg_promo_count--;
+}
+
+static void cg_promo_reset(void) {
+    for (int i = 0; i < cg_promo_count; i++) free(cg_promo[i]);
+    cg_promo_count = 0;
+    cg_int_enabled = 0;
+}
+
+typedef struct { char **names; int count; int cap; } CgNameSet;
+static void cg_nameset_add(CgNameSet *s, const char *name) {
+    if (!name || !name[0]) return;
+    for (int i = 0; i < s->count; i++) {
+        if (strcmp(s->names[i], name) == 0) return;
+    }
+    if (s->count >= s->cap) {
+        s->cap = s->cap ? s->cap * 2 : 16;
+        s->names = realloc(s->names, (size_t)s->cap * sizeof(char *));
+    }
+    s->names[s->count++] = qs_strdup(name);
+}
+static int cg_nameset_has(CgNameSet *s, const char *name) {
+    if (!name) return 0;
+    for (int i = 0; i < s->count; i++) {
+        if (strcmp(s->names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+static void cg_nameset_free(CgNameSet *s) {
+    for (int i = 0; i < s->count; i++) free(s->names[i]);
+    free(s->names);
+    s->names = NULL;
+    s->count = 0;
+    s->cap = 0;
+}
+
+typedef struct {
+    void (*read)(void *ctx, const char *name);
+    void (*write)(void *ctx, const char *name);
+    void (*assign)(void *ctx, const char *name, char op, ASTNode *value);
+    void (*call)(void *ctx, const char *name);
+    void (*ret)(void *ctx, ASTNode *value);
+    void *ctx;
+    int stop_funcs;
+    int unsupported;
+} CgWalk;
+
+static void cg_walk_node(ASTNode *n, CgWalk *w) {
+    if (!n) return;
+    switch (n->type) {
+        case AST_INT_LIT: case AST_FLOAT_LIT: case AST_STR_LIT:
+        case AST_BOOL_LIT: case AST_NULL_LIT:
+        case AST_BREAK: case AST_CONTINUE:
+        case AST_FIELD_DEF:
+            break;
+        case AST_IDENT:
+            if (w->read) w->read(w->ctx, n->as.string);
+            break;
+        case AST_UNARY_NEG: case AST_UNARY_NOT:
+        case AST_THROW: case AST_EXPR_STMT:
+            cg_walk_node(n->as.unary.operand, w);
+            break;
+        case AST_RETURN:
+            if (w->ret) w->ret(w->ctx, n->as.unary.operand);
+            cg_walk_node(n->as.unary.operand, w);
+            break;
+        case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
+        case AST_BINARY_DIV: case AST_BINARY_MOD:
+        case AST_BINARY_EQ: case AST_BINARY_NEQ:
+        case AST_BINARY_LT: case AST_BINARY_GT:
+        case AST_BINARY_LTE: case AST_BINARY_GTE:
+        case AST_BINARY_AND: case AST_BINARY_OR:
+        case AST_BINARY_IN:
+            cg_walk_node(n->as.binary.left, w);
+            cg_walk_node(n->as.binary.right, w);
+            break;
+        case AST_CHAINED_CMP:
+            for (int i = 0; i < n->as.chained.count; i++) cg_walk_node(n->as.chained.operands[i], w);
+            break;
+        case AST_INDEX:
+            cg_walk_node(n->as.index.object, w);
+            cg_walk_node(n->as.index.key, w);
+            break;
+        case AST_SLICE:
+            cg_walk_node(n->as.slice.object, w);
+            cg_walk_node(n->as.slice.start, w);
+            cg_walk_node(n->as.slice.end, w);
+            break;
+        case AST_CALL:
+            if (w->call) w->call(w->ctx, n->as.call.name);
+            for (int i = 0; i < n->as.call.argc; i++) cg_walk_node(n->as.call.args[i], w);
+            break;
+        case AST_METHOD_CALL:
+            cg_walk_node(n->as.method_call.object, w);
+            for (int i = 0; i < n->as.method_call.argc; i++) cg_walk_node(n->as.method_call.args[i], w);
+            break;
+        case AST_LIST_LIT:
+            for (int i = 0; i < n->as.list.count; i++) cg_walk_node(n->as.list.items[i], w);
+            break;
+        case AST_LIST_COMP:
+            cg_walk_node(n->as.comp.iterable, w);
+            if (w->write) w->write(w->ctx, n->as.comp.var);
+            cg_walk_node(n->as.comp.cond, w);
+            cg_walk_node(n->as.comp.expr, w);
+            break;
+        case AST_MAP_LIT:
+            for (int i = 0; i < n->as.map.count; i++) {
+                cg_walk_node(n->as.map.keys[i], w);
+                cg_walk_node(n->as.map.vals[i], w);
+            }
+            break;
+        case AST_FSTRING:
+            for (int i = 0; i < n->as.fstring.count; i++) cg_walk_node(n->as.fstring.parts[i], w);
+            break;
+        case AST_LAMBDA:
+            w->unsupported = 1;
+            break;
+        case AST_ASSIGN:
+            if (n->as.assign.op != '=' && w->read) w->read(w->ctx, n->as.assign.name);
+            cg_walk_node(n->as.assign.value, w);
+            if (w->write) w->write(w->ctx, n->as.assign.name);
+            if (w->assign) w->assign(w->ctx, n->as.assign.name, n->as.assign.op, n->as.assign.value);
+            break;
+        case AST_PRINT:
+            for (int i = 0; i < n->as.print.argc; i++) cg_walk_node(n->as.print.args[i], w);
+            break;
+        case AST_IF:
+            cg_walk_node(n->as.if_stmt.cond, w);
+            cg_walk_node(n->as.if_stmt.then_body, w);
+            cg_walk_node(n->as.if_stmt.elif_branch, w);
+            cg_walk_node(n->as.if_stmt.else_body, w);
+            break;
+        case AST_WHILE:
+            cg_walk_node(n->as.while_stmt.cond, w);
+            cg_walk_node(n->as.while_stmt.body, w);
+            break;
+        case AST_REPEAT:
+            cg_walk_node(n->as.repeat.count_or_coll, w);
+            if (w->write) w->write(w->ctx, n->as.repeat.index_name);
+            if (w->write) w->write(w->ctx, n->as.repeat.var_name);
+            cg_walk_node(n->as.repeat.body, w);
+            break;
+        case AST_TRY:
+            w->unsupported = 1;
+            cg_walk_node(n->as.try_stmt.try_body, w);
+            if (w->write) w->write(w->ctx, n->as.try_stmt.err_var);
+            cg_walk_node(n->as.try_stmt.oops_body, w);
+            break;
+        case AST_IMPORT:
+            w->unsupported = 1;
+            break;
+        case AST_BLOCK: case AST_PROGRAM:
+            for (int i = 0; i < n->as.block.count; i++) cg_walk_node(n->as.block.stmts[i], w);
+            break;
+        case AST_FUNC_DEF:
+            if (!w->stop_funcs) cg_walk_node(n->as.func_def.body, w);
+            break;
+        case AST_METHOD_DEF:
+            if (!w->stop_funcs) cg_walk_node(n->as.method_def.body, w);
+            break;
+        case AST_CLASS_DEF:
+            w->unsupported = 1;
+            break;
+        case AST_NEW:
+            w->unsupported = 1;
+            for (int i = 0; i < n->as.new_expr.argc; i++) cg_walk_node(n->as.new_expr.args[i], w);
+            break;
+        case AST_FIELD_ACCESS:
+            w->unsupported = 1;
+            cg_walk_node(n->as.field_access.object, w);
+            break;
+        case AST_FIELD_ASSIGN:
+            w->unsupported = 1;
+            cg_walk_node(n->as.field_assign.object, w);
+            cg_walk_node(n->as.field_assign.value, w);
+            break;
+        default:
+            w->unsupported = 1;
+            break;
+    }
+}
+
+static void cg_nameset_add_cb(void *ctx, const char *name) {
+    cg_nameset_add((CgNameSet *)ctx, name);
+}
+
+typedef struct { char *name; char op; ASTNode *rhs; } CgAssign;
+static CgAssign *cg_assign_list = NULL;
+static int cg_assign_list_count = 0;
+static int cg_assign_list_cap = 0;
+
+static void cg_assign_list_free(void) {
+    for (int i = 0; i < cg_assign_list_count; i++) free(cg_assign_list[i].name);
+    cg_assign_list_count = 0;
+}
+
+static void cg_assign_cb(void *ctx, const char *name, char op, ASTNode *value) {
+    (void)ctx;
+    if (!name) return;
+    if (cg_assign_list_count >= cg_assign_list_cap) {
+        cg_assign_list_cap = cg_assign_list_cap ? cg_assign_list_cap * 2 : 32;
+        cg_assign_list = realloc(cg_assign_list, (size_t)cg_assign_list_cap * sizeof(CgAssign));
+    }
+    cg_assign_list[cg_assign_list_count].name = qs_strdup(name);
+    cg_assign_list[cg_assign_list_count].op = op;
+    cg_assign_list[cg_assign_list_count].rhs = value;
+    cg_assign_list_count++;
+}
+
+static int cg_expr_is_int(ASTNode *n) {
+    if (!n) return 0;
+    switch (n->type) {
+        case AST_INT_LIT:
+            return 1;
+        case AST_IDENT:
+            return cg_promo_find(n->as.string) >= 0;
+        case AST_UNARY_NEG:
+            return cg_expr_is_int(n->as.unary.operand);
+        case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
+            return cg_expr_is_int(n->as.binary.left) && cg_expr_is_int(n->as.binary.right);
+        case AST_BINARY_DIV: case AST_BINARY_MOD: {
+            ASTNode *r = n->as.binary.right;
+            if (!r || r->type != AST_INT_LIT || r->as.integer == 0) return 0;
+            return cg_expr_is_int(n->as.binary.left);
+        }
+        case AST_CALL: {
+            int fi = cg_find_int_func(n->as.call.name);
+            if (fi < 0) return 0;
+            if (n->as.call.argc != cg_funcs[fi].param_count) return 0;
+            for (int i = 0; i < n->as.call.argc; i++) {
+                if (!cg_expr_is_int(n->as.call.args[i])) return 0;
+            }
+            return 1;
+        }
+        default:
+            return 0;
+    }
+}
+
+static char *cg_promo_cname(const char *name) {
+    size_t len = strlen(name) + 3;
+    char *out = malloc(len);
+    snprintf(out, len, "v_%s", name);
+    return out;
+}
+
+static char *cg_int_expr(ASTNode *n) {
+    if (!n) return NULL;
+    switch (n->type) {
+        case AST_INT_LIT: {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%ldL", n->as.integer);
+            return qs_strdup(buf);
+        }
+        case AST_IDENT:
+            if (cg_promo_find(n->as.string) >= 0) return cg_promo_cname(n->as.string);
+            return NULL;
+        case AST_UNARY_NEG: {
+            char *inner = cg_int_expr(n->as.unary.operand);
+            if (!inner) return NULL;
+            size_t len = strlen(inner) + 4;
+            char *out = malloc(len);
+            snprintf(out, len, "(-%s)", inner);
+            free(inner);
+            return out;
+        }
+        case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
+        case AST_BINARY_DIV: case AST_BINARY_MOD: {
+            char *l = cg_int_expr(n->as.binary.left);
+            if (!l) return NULL;
+            char *r = cg_int_expr(n->as.binary.right);
+            if (!r) { free(l); return NULL; }
+            const char *op = "+";
+            switch (n->type) {
+                case AST_BINARY_SUB: op = "-"; break;
+                case AST_BINARY_MUL: op = "*"; break;
+                case AST_BINARY_DIV: op = "/"; break;
+                case AST_BINARY_MOD: op = "%"; break;
+                default: break;
+            }
+            size_t len = strlen(l) + strlen(r) + 8;
+            char *out = malloc(len);
+            snprintf(out, len, "(%s %s %s)", l, op, r);
+            free(l);
+            free(r);
+            return out;
+        }
+        case AST_CALL: {
+            int fi = cg_find_int_func(n->as.call.name);
+            if (fi < 0 || n->as.call.argc != cg_funcs[fi].param_count) return NULL;
+            size_t cap = 64;
+            char *out = malloc(cap);
+            int len = snprintf(out, cap, "qs_int_%d(", fi);
+            for (int i = 0; i < n->as.call.argc; i++) {
+                char *a = cg_int_expr(n->as.call.args[i]);
+                if (!a) { free(out); return NULL; }
+                size_t need = (size_t)len + strlen(a) + 4;
+                if (need > cap) {
+                    cap = need * 2;
+                    out = realloc(out, cap);
+                }
+                if (i) { out[len++] = ','; out[len++] = ' '; }
+                memcpy(out + len, a, strlen(a));
+                len += (int)strlen(a);
+                free(a);
+            }
+            out[len++] = ')';
+            out[len] = '\0';
+            return out;
+        }
+        default:
+            return NULL;
+    }
+}
+
+static int cg_is_func_name(const char *name) {
+    if (!name) return 0;
+    for (int i = 0; i < cg_func_count; i++) {
+        if (cg_funcs[i].reg_name && strcmp(cg_funcs[i].reg_name, name) == 0) return 1;
+    }
+    return 0;
+}
+
+static int cg_node_reads_name(ASTNode *n, const char *name) {
+    if (!n) return 0;
+    CgNameSet s = {0};
+    CgWalk w = {0};
+    w.stop_funcs = 1;
+    w.read = cg_nameset_add_cb;
+    w.ctx = &s;
+    cg_walk_node(n, &w);
+    int found = cg_nameset_has(&s, name);
+    cg_nameset_free(&s);
+    return found;
+}
+
+static void cg_analyze_int(ASTNode *root) {
+    cg_promo_reset();
+    cg_assign_list_free();
+    if (!root) return;
+    if (cg_has_lambda || cg_has_import) return;
+    if (!(root->type == AST_PROGRAM || root->type == AST_BLOCK)) return;
+
+    CgNameSet blocked = {0};
+    {
+        CgWalk bw = {0};
+        bw.stop_funcs = 0;
+        bw.read = cg_nameset_add_cb;
+        bw.write = cg_nameset_add_cb;
+        bw.ctx = &blocked;
+        for (int i = 0; i < root->as.block.count; i++) {
+            ASTNode *s = root->as.block.stmts[i];
+            if (!s) continue;
+            if (s->type == AST_FUNC_DEF) {
+                cg_walk_node(s->as.func_def.body, &bw);
+            } else if (s->type == AST_METHOD_DEF) {
+                cg_walk_node(s->as.method_def.body, &bw);
+            } else if (s->type == AST_CLASS_DEF) {
+                for (int m = 0; m < s->as.class_def.method_count; m++) {
+                    ASTNode *md = s->as.class_def.methods[m];
+                    if (md) cg_walk_node(md->as.method_def.body, &bw);
+                }
+            }
+        }
+    }
+
+    CgWalk tw = {0};
+    tw.stop_funcs = 1;
+    tw.assign = cg_assign_cb;
+    cg_walk_node(root, &tw);
+    if (tw.unsupported) { cg_nameset_free(&blocked); return; }
+
+    CgNameSet cand = {0};
+    for (int i = 0; i < cg_assign_list_count; i++) {
+        cg_nameset_add(&cand, cg_assign_list[i].name);
+    }
+
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int c = 0; c < cand.count; c++) {
+            const char *nm = cand.names[c];
+            if (cg_promo_find(nm) >= 0) continue;
+            if (cg_nameset_has(&blocked, nm)) continue;
+            if (is_define_name(nm)) continue;
+            if (cg_is_func_name(nm) || cg_is_class(nm)) continue;
+            int ok = 1, any = 0;
+            for (int i = 0; i < cg_assign_list_count; i++) {
+                if (strcmp(cg_assign_list[i].name, nm) != 0) continue;
+                any = 1;
+                ASTNode *rhs = cg_assign_list[i].rhs;
+                char op = cg_assign_list[i].op;
+                int ri = cg_expr_is_int(rhs);
+                if (ri && op != '=' && (op == '/' || op == '%')) {
+                    if (!rhs || rhs->type != AST_INT_LIT || rhs->as.integer == 0) ri = 0;
+                }
+                if (!ri) { ok = 0; break; }
+            }
+            if (any && ok) { cg_promo_add(nm); changed = 1; }
+        }
+    }
+
+    CgNameSet decided = {0};
+    for (int i = 0; i < root->as.block.count; i++) {
+        ASTNode *s = root->as.block.stmts[i];
+        if (!s) continue;
+        if (s->type == AST_FUNC_DEF || s->type == AST_METHOD_DEF ||
+            s->type == AST_CLASS_DEF || s->type == AST_FIELD_DEF) continue;
+        CgNameSet names = {0};
+        {
+            CgWalk nw = {0};
+            nw.stop_funcs = 1;
+            nw.read = cg_nameset_add_cb;
+            nw.write = cg_nameset_add_cb;
+            nw.ctx = &names;
+            cg_walk_node(s, &nw);
+        }
+        for (int k = 0; k < names.count; k++) {
+            const char *nm = names.names[k];
+            if (cg_nameset_has(&decided, nm)) continue;
+            cg_nameset_add(&decided, nm);
+            if (cg_promo_find(nm) < 0) continue;
+            int good = (s->type == AST_ASSIGN && strcmp(s->as.assign.name, nm) == 0 &&
+                        s->as.assign.op == '=' &&
+                        !cg_node_reads_name(s->as.assign.value, nm));
+            if (!good) cg_promo_remove(nm);
+        }
+        cg_nameset_free(&names);
+    }
+
+    cg_nameset_free(&decided);
+    cg_nameset_free(&cand);
+    cg_nameset_free(&blocked);
+    cg_int_enabled = (cg_promo_count > 0);
+}
+
+static int cg_fi_int[CG_MAX_FUNCS];
+static char **cg_fi_promo[CG_MAX_FUNCS];
+static int cg_fi_promo_count[CG_MAX_FUNCS];
+static int cg_int_func_ret = 0;
+
+static int cg_promo_save_count = 0;
+static int cg_promo_save_enabled = 0;
+static char *cg_promo_save[CG_MAX_PROMO];
+
+static void cg_promo_push(void) {
+    cg_promo_save_count = cg_promo_count;
+    cg_promo_save_enabled = cg_int_enabled;
+    for (int i = 0; i < cg_promo_count; i++) cg_promo_save[i] = cg_promo[i];
+    cg_promo_count = 0;
+    cg_int_enabled = 0;
+}
+
+static void cg_promo_pop(void) {
+    cg_promo_count = cg_promo_save_count;
+    cg_int_enabled = cg_promo_save_enabled;
+    for (int i = 0; i < cg_promo_save_count; i++) cg_promo[i] = cg_promo_save[i];
+}
+
+static int cg_func_index(const char *name) {
+    if (!name) return -1;
+    for (int i = 0; i < cg_func_count; i++) {
+        if (cg_funcs[i].reg_name && strcmp(cg_funcs[i].reg_name, name) == 0) return i;
+    }
+    return -1;
+}
+
+static int cg_find_int_func(const char *name) {
+    int i = cg_func_index(name);
+    return (i >= 0 && cg_fi_int[i]) ? i : -1;
+}
+
+static void cg_fi_free(void) {
+    for (int i = 0; i < CG_MAX_FUNCS; i++) {
+        if (cg_fi_promo[i]) {
+            for (int j = 0; j < cg_fi_promo_count[i]; j++) free(cg_fi_promo[i][j]);
+            free(cg_fi_promo[i]);
+            cg_fi_promo[i] = NULL;
+        }
+        cg_fi_promo_count[i] = 0;
+        cg_fi_int[i] = 0;
+    }
+}
+
+static int cg_func_body_safe(ASTNode *n, int *func_int) {
+    if (!n) return 1;
+    switch (n->type) {
+        case AST_INT_LIT: case AST_BOOL_LIT:
+        case AST_BREAK: case AST_CONTINUE:
+            return 1;
+        case AST_IDENT:
+            return cg_promo_find(n->as.string) >= 0;
+        case AST_UNARY_NEG: case AST_UNARY_NOT:
+        case AST_RETURN: case AST_THROW: case AST_EXPR_STMT:
+            return cg_func_body_safe(n->as.unary.operand, func_int);
+        case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
+        case AST_BINARY_DIV: case AST_BINARY_MOD:
+        case AST_BINARY_EQ: case AST_BINARY_NEQ:
+        case AST_BINARY_LT: case AST_BINARY_GT:
+        case AST_BINARY_LTE: case AST_BINARY_GTE:
+        case AST_BINARY_AND: case AST_BINARY_OR:
+            return cg_func_body_safe(n->as.binary.left, func_int) &&
+                   cg_func_body_safe(n->as.binary.right, func_int);
+        case AST_CALL: {
+            int idx = cg_func_index(n->as.call.name);
+            if (idx < 0 || !func_int[idx]) return 0;
+            if (n->as.call.argc != cg_funcs[idx].param_count) return 0;
+            for (int i = 0; i < n->as.call.argc; i++) {
+                if (!cg_func_body_safe(n->as.call.args[i], func_int)) return 0;
+            }
+            return 1;
+        }
+        case AST_ASSIGN:
+            if (cg_promo_find(n->as.assign.name) < 0) return 0;
+            return cg_func_body_safe(n->as.assign.value, func_int);
+        case AST_IF:
+            return cg_func_body_safe(n->as.if_stmt.cond, func_int) &&
+                   cg_func_body_safe(n->as.if_stmt.then_body, func_int) &&
+                   cg_func_body_safe(n->as.if_stmt.elif_branch, func_int) &&
+                   cg_func_body_safe(n->as.if_stmt.else_body, func_int);
+        case AST_WHILE:
+            return cg_func_body_safe(n->as.while_stmt.cond, func_int) &&
+                   cg_func_body_safe(n->as.while_stmt.body, func_int);
+        case AST_BLOCK: case AST_PROGRAM:
+            for (int i = 0; i < n->as.block.count; i++) {
+                if (!cg_func_body_safe(n->as.block.stmts[i], func_int)) return 0;
+            }
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+typedef struct { int count; int ok; } CgRetScan;
+static void cg_ret_cb(void *ctx, ASTNode *value) {
+    CgRetScan *rs = (CgRetScan *)ctx;
+    rs->count++;
+    if (!value || !cg_expr_is_int(value)) rs->ok = 0;
+}
+
+static int cg_node_returns(ASTNode *n) {
+    if (!n) return 0;
+    switch (n->type) {
+        case AST_RETURN:
+            return 1;
+        case AST_BLOCK: case AST_PROGRAM:
+            for (int i = 0; i < n->as.block.count; i++) {
+                if (cg_node_returns(n->as.block.stmts[i])) return 1;
+            }
+            return 0;
+        case AST_IF:
+            if (n->as.if_stmt.elif_branch || !n->as.if_stmt.else_body) return 0;
+            return cg_node_returns(n->as.if_stmt.then_body) &&
+                   cg_node_returns(n->as.if_stmt.else_body);
+        default:
+            return 0;
+    }
+}
+
+static int cg_func_is_int_impl(int fi, int *func_int, char ***out_names, int *out_count) {
+    CgFunc *f = &cg_funcs[fi];
+    *out_names = NULL;
+    *out_count = 0;
+    if (f->is_method || !f->body) return 0;
+
+    cg_promo_reset();
+    cg_assign_list_free();
+    for (int i = 0; i < f->param_count; i++) cg_promo_add(f->params[i]);
+
+    {
+        CgWalk w = {0};
+        w.stop_funcs = 1;
+        w.assign = cg_assign_cb;
+        cg_walk_node(f->body, &w);
+        if (w.unsupported) return 0;
+    }
+
+    CgNameSet cand = {0};
+    for (int i = 0; i < cg_assign_list_count; i++) cg_nameset_add(&cand, cg_assign_list[i].name);
+
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int c = 0; c < cand.count; c++) {
+            const char *nm = cand.names[c];
+            if (cg_promo_find(nm) >= 0) continue;
+            if (is_define_name(nm)) continue;
+            if (cg_is_func_name(nm) || cg_is_class(nm)) continue;
+            int ok = 1, any = 0;
+            for (int i = 0; i < cg_assign_list_count; i++) {
+                if (strcmp(cg_assign_list[i].name, nm) != 0) continue;
+                any = 1;
+                ASTNode *rhs = cg_assign_list[i].rhs;
+                char op = cg_assign_list[i].op;
+                int ri = cg_expr_is_int(rhs);
+                if (ri && op != '=' && (op == '/' || op == '%')) {
+                    if (!rhs || rhs->type != AST_INT_LIT || rhs->as.integer == 0) ri = 0;
+                }
+                if (!ri) { ok = 0; break; }
+            }
+            if (any && ok) { cg_promo_add(nm); changed = 1; }
+        }
+    }
+
+    for (int i = 0; i < f->param_count; i++) {
+        const char *p = f->params[i];
+        for (int a = 0; a < cg_assign_list_count; a++) {
+            if (strcmp(cg_assign_list[a].name, p) != 0) continue;
+            ASTNode *rhs = cg_assign_list[a].rhs;
+            char op = cg_assign_list[a].op;
+            int ri = cg_expr_is_int(rhs);
+            if (ri && op != '=' && (op == '/' || op == '%')) {
+                if (!rhs || rhs->type != AST_INT_LIT || rhs->as.integer == 0) ri = 0;
+            }
+            if (!ri) { cg_nameset_free(&cand); return 0; }
+        }
+    }
+
+    int all_ok = 1;
+    {
+        CgRetScan rs = {0, 1};
+        CgWalk w = {0};
+        w.stop_funcs = 1;
+        w.ret = cg_ret_cb;
+        w.ctx = &rs;
+        cg_walk_node(f->body, &w);
+        if (rs.count == 0 || !rs.ok) all_ok = 0;
+    }
+    if (all_ok && !cg_func_body_safe(f->body, func_int)) all_ok = 0;
+    if (all_ok && !cg_node_returns(f->body)) all_ok = 0;
+    if (!all_ok) { cg_nameset_free(&cand); return 0; }
+
+    *out_names = malloc((size_t)cg_promo_count * sizeof(char *));
+    *out_count = cg_promo_count;
+    for (int i = 0; i < cg_promo_count; i++) (*out_names)[i] = qs_strdup(cg_promo[i]);
+    cg_nameset_free(&cand);
+    return 1;
+}
+
+static void cg_analyze_int_funcs(void) {
+    cg_fi_free();
+    for (int i = 0; i < cg_func_count; i++) {
+        cg_fi_int[i] = (!cg_funcs[i].is_method && cg_funcs[i].body) ? 1 : 0;
+    }
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < cg_func_count; i++) {
+            if (!cg_fi_int[i]) continue;
+            if (cg_fi_promo[i]) {
+                for (int j = 0; j < cg_fi_promo_count[i]; j++) free(cg_fi_promo[i][j]);
+                free(cg_fi_promo[i]);
+                cg_fi_promo[i] = NULL;
+                cg_fi_promo_count[i] = 0;
+            }
+            char **names = NULL;
+            int count = 0;
+            if (cg_func_is_int_impl(i, cg_fi_int, &names, &count)) {
+                cg_fi_promo[i] = names;
+                cg_fi_promo_count[i] = count;
+            } else {
+                cg_fi_int[i] = 0;
+                free(names);
+                changed = 1;
+            }
+        }
+    }
+    cg_promo_reset();
+    cg_assign_list_free();
+}
+
 static void cg_invalidate_assignments(ASTNode *node);
 
 static void cg_stmt(ASTNode *node);
 static void cg_block(ASTNode *block);
 static char *cg_expr(ASTNode *node);
 static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args, int argc);
+static int cg_is_mutating_method(const char *m);
 
 static void cg_emit(const char *fmt, ...) {
     va_list ap;
@@ -225,6 +962,37 @@ static void cg_emit_names_array(char **names, int count) {
 }
 
 static char *cg_binary_op(ASTNode *node) {
+    if (cg_int_enabled) {
+        int code = -1;
+        switch (node->type) {
+            case AST_BINARY_EQ: code = 0; break;
+            case AST_BINARY_NEQ: code = 1; break;
+            case AST_BINARY_LT: code = 2; break;
+            case AST_BINARY_GT: code = 3; break;
+            case AST_BINARY_LTE: code = 4; break;
+            case AST_BINARY_GTE: code = 5; break;
+            default: break;
+        }
+        if (code >= 0) {
+            if (cg_expr_is_int(node->as.binary.left) && cg_expr_is_int(node->as.binary.right)) {
+                static const char *cops[6] = { "==", "!=", "<", ">", "<=", ">=" };
+                char *l = cg_int_expr(node->as.binary.left);
+                char *r = cg_int_expr(node->as.binary.right);
+                char *t = cg_newtemp();
+                cg_emit("    Value %s = make_bool((%s) %s (%s));\n", t, l, cops[code], r);
+                free(l);
+                free(r);
+                return t;
+            }
+            if (cg_expr_is_int(node->as.binary.left) || cg_expr_is_int(node->as.binary.right)) {
+                char *left = cg_expr(node->as.binary.left);
+                char *right = cg_expr(node->as.binary.right);
+                char *t = cg_newtemp();
+                cg_emit("    Value %s = qs_bool_cmp(%s, %s, %d);\n", t, left, right, code);
+                return t;
+            }
+        }
+    }
     char *left = cg_expr(node->as.binary.left);
     char *right = cg_expr(node->as.binary.right);
     char *t = cg_newtemp();
@@ -320,6 +1088,7 @@ static char *cg_list_comp(ASTNode *node) {
 }
 
 static char *cg_lambda(ASTNode *node) {
+    cg_has_lambda = 1;
     char *t = cg_newtemp();
     cg_emit("    Value %s = qs_make_lambda(%s, ", t, cg_in_func ? "&local" : "env");
     write_c_string(cg_out, node->as.lambda.body_text ? node->as.lambda.body_text : "");
@@ -357,6 +1126,21 @@ static char *cg_lambda(ASTNode *node) {
 
 static char *cg_call_expr(ASTNode *node) {
     int argc = node->as.call.argc;
+    cg_mark_read(node->as.call.name);
+
+    {
+        int fi = cg_find_int_func(node->as.call.name);
+        if (fi >= 0 && argc == cg_funcs[fi].param_count) {
+            char *ie = cg_int_expr(node);
+            if (ie) {
+                char *tt = cg_newtemp();
+                cg_emit("    Value %s = make_integer(%s);\n", tt, ie);
+                free(ie);
+                return tt;
+            }
+        }
+    }
+
     char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
     for (int i = 0; i < argc; i++) temps[i] = cg_expr(node->as.call.args[i]);
 
@@ -785,6 +1569,16 @@ static char *cg_expr(ASTNode *node) {
         }
     }
 
+    if (cg_int_enabled && cg_expr_is_int(node)) {
+        char *ie = cg_int_expr(node);
+        if (ie) {
+            char *t = cg_newtemp();
+            cg_emit("    Value %s = make_integer(%s);\n", t, ie);
+            free(ie);
+            return t;
+        }
+    }
+
     switch (node->type) {
         case AST_INT_LIT: {
             char *t = cg_newtemp();
@@ -812,6 +1606,7 @@ static char *cg_expr(ASTNode *node) {
             return cg_emit_null();
 
         case AST_IDENT: {
+            cg_mark_read(node->as.string);
             char *t = cg_newtemp();
             cg_emit("    Value %s = qs_get(env, &local, ", t);
             write_c_string(cg_out, node->as.string ? node->as.string : "");
@@ -905,9 +1700,19 @@ static char *cg_expr(ASTNode *node) {
         case AST_CALL:
             return cg_call_expr(node);
 
-        case AST_METHOD_CALL:
-            return cg_method_call(node->as.method_call.object, node->as.method_call.method,
-                                  node->as.method_call.args, node->as.method_call.argc);
+        case AST_METHOD_CALL: {
+            ASTNode *obj = node->as.method_call.object;
+            char *r = cg_method_call(obj, node->as.method_call.method,
+                                     node->as.method_call.args, node->as.method_call.argc);
+            if (obj && obj->type == AST_IDENT && obj->as.string &&
+                cg_is_mutating_method(node->as.method_call.method)) {
+                cg_const_clear(obj->as.string);
+                cg_emit("    qs_set(env, &local, ");
+                write_c_string(cg_out, obj->as.string);
+                cg_emit(", clone_value(%s));\n", r);
+            }
+            return r;
+        }
 
         case AST_FIELD_ACCESS: {
             char *obj = cg_expr(node->as.field_access.object);
@@ -935,11 +1740,133 @@ static int cg_is_mutating_method(const char *m) {
            strcmp(m, "fill") == 0 || strcmp(m, "splice") == 0;
 }
 
+static int cg_try_fold_method_mutation(ASTNode *node, Value *out) {
+    if (!node || node->type != AST_METHOD_CALL) return 0;
+    ASTNode *obj = node->as.method_call.object;
+    const char *m = node->as.method_call.method;
+    if (!obj || obj->type != AST_IDENT || !obj->as.string || !m) return 0;
+    if (strcmp(m, "append") != 0 && strcmp(m, "extend") != 0 &&
+        strcmp(m, "sort") != 0 && strcmp(m, "remove") != 0) return 0;
+    const char *name = obj->as.string;
+    Value *cv = cg_const_get(name);
+    if (!cv) return 0;
+    if (cv->type != VALUE_LIST && cv->type != VALUE_DICT) return 0;
+
+    int argc = node->as.method_call.argc;
+    ValueList fargs = {0};
+    for (int i = 0; i < argc; i++) {
+        Value av;
+        if (!cg_const_eval(node->as.method_call.args[i], &av)) {
+            for (size_t k = 0; k < fargs.count; k++) free_value(fargs.items[k]);
+            free(fargs.items);
+            return 0;
+        }
+        list_push(&fargs, av);
+    }
+
+    Value newv = clone_value(*cv);
+    ParseError perr = {0};
+    Parser bparser = {"", 0, 0, NULL, &perr, -1};
+    int ok = apply_method(&bparser, &newv, m, &fargs);
+    for (size_t k = 0; k < fargs.count; k++) free_value(fargs.items[k]);
+    free(fargs.items);
+    if (!ok) {
+        free_value(newv);
+        return 0;
+    }
+    if (!cg_value_small(newv) || !cg_value_finite(newv)) {
+        free_value(newv);
+        return 0;
+    }
+
+    cg_const_set(name, clone_value(newv));
+    *out = newv;
+    return 1;
+}
+
 static void cg_invalidate_assignments(ASTNode *node) {
     if (!node) return;
     switch (node->type) {
         case AST_ASSIGN:
             cg_const_clear(node->as.assign.name);
+            cg_invalidate_assignments(node->as.assign.value);
+            break;
+        case AST_FIELD_ASSIGN:
+            cg_invalidate_assignments(node->as.field_assign.object);
+            cg_invalidate_assignments(node->as.field_assign.value);
+            break;
+        case AST_EXPR_STMT:
+        case AST_UNARY_NEG:
+        case AST_UNARY_NOT:
+        case AST_RETURN:
+        case AST_THROW:
+            cg_invalidate_assignments(node->as.unary.operand);
+            break;
+        case AST_METHOD_CALL: {
+            ASTNode *obj = node->as.method_call.object;
+            if (obj && obj->type == AST_IDENT && obj->as.string &&
+                cg_is_mutating_method(node->as.method_call.method)) {
+                cg_const_clear(obj->as.string);
+            }
+            cg_invalidate_assignments(obj);
+            for (int i = 0; i < node->as.method_call.argc; i++)
+                cg_invalidate_assignments(node->as.method_call.args[i]);
+            break;
+        }
+        case AST_BINARY_ADD: case AST_BINARY_SUB: case AST_BINARY_MUL:
+        case AST_BINARY_DIV: case AST_BINARY_MOD:
+        case AST_BINARY_EQ: case AST_BINARY_NEQ:
+        case AST_BINARY_LT: case AST_BINARY_GT: case AST_BINARY_LTE: case AST_BINARY_GTE:
+        case AST_BINARY_AND: case AST_BINARY_OR: case AST_BINARY_IN:
+            cg_invalidate_assignments(node->as.binary.left);
+            cg_invalidate_assignments(node->as.binary.right);
+            break;
+        case AST_CHAINED_CMP:
+            for (int i = 0; i < node->as.chained.count; i++)
+                cg_invalidate_assignments(node->as.chained.operands[i]);
+            break;
+        case AST_INDEX:
+            cg_invalidate_assignments(node->as.index.object);
+            cg_invalidate_assignments(node->as.index.key);
+            break;
+        case AST_SLICE:
+            cg_invalidate_assignments(node->as.slice.object);
+            cg_invalidate_assignments(node->as.slice.start);
+            cg_invalidate_assignments(node->as.slice.end);
+            break;
+        case AST_CALL:
+            for (int i = 0; i < node->as.call.argc; i++)
+                cg_invalidate_assignments(node->as.call.args[i]);
+            break;
+        case AST_NEW:
+            for (int i = 0; i < node->as.new_expr.argc; i++)
+                cg_invalidate_assignments(node->as.new_expr.args[i]);
+            break;
+        case AST_LIST_LIT:
+            for (int i = 0; i < node->as.list.count; i++)
+                cg_invalidate_assignments(node->as.list.items[i]);
+            break;
+        case AST_LIST_COMP:
+            cg_invalidate_assignments(node->as.comp.expr);
+            cg_invalidate_assignments(node->as.comp.iterable);
+            cg_invalidate_assignments(node->as.comp.cond);
+            break;
+        case AST_MAP_LIT:
+            for (int i = 0; i < node->as.map.count; i++) {
+                cg_invalidate_assignments(node->as.map.keys[i]);
+                cg_invalidate_assignments(node->as.map.vals[i]);
+            }
+            break;
+        case AST_FSTRING:
+            for (int i = 0; i < node->as.fstring.count; i++)
+                cg_invalidate_assignments(node->as.fstring.parts[i]);
+            break;
+        case AST_FIELD_ACCESS:
+            cg_invalidate_assignments(node->as.field_access.object);
+            break;
+        case AST_PRINT:
+            for (int i = 0; i < node->as.print.argc; i++)
+                cg_invalidate_assignments(node->as.print.args[i]);
             break;
         case AST_BLOCK:
         case AST_PROGRAM:
@@ -947,16 +1874,19 @@ static void cg_invalidate_assignments(ASTNode *node) {
                 cg_invalidate_assignments(node->as.block.stmts[i]);
             break;
         case AST_IF:
+            cg_invalidate_assignments(node->as.if_stmt.cond);
             cg_invalidate_assignments(node->as.if_stmt.then_body);
             cg_invalidate_assignments(node->as.if_stmt.elif_branch);
             cg_invalidate_assignments(node->as.if_stmt.else_body);
             break;
         case AST_WHILE:
+            cg_invalidate_assignments(node->as.while_stmt.cond);
             cg_invalidate_assignments(node->as.while_stmt.body);
             break;
         case AST_REPEAT:
             if (node->as.repeat.var_name) cg_const_clear(node->as.repeat.var_name);
             if (node->as.repeat.index_name) cg_const_clear(node->as.repeat.index_name);
+            cg_invalidate_assignments(node->as.repeat.count_or_coll);
             cg_invalidate_assignments(node->as.repeat.body);
             break;
         case AST_TRY:
@@ -972,8 +1902,52 @@ static void cg_invalidate_assignments(ASTNode *node) {
 static void cg_assign(ASTNode *node) {
     const char *name = node->as.assign.name;
     char op = node->as.assign.op;
+
+    if (cg_is_promo(name)) {
+        ASTNode *rhs = node->as.assign.value;
+        char *in = cg_int_expr(rhs);
+        if (in) {
+            if (op == '=') {
+                cg_emit("    v_%s = %s;\n", name, in);
+            } else {
+                const char *cop = "+";
+                if (op == '-') cop = "-";
+                else if (op == '*') cop = "*";
+                else if (op == '/') cop = "/";
+                else if (op == '%') cop = "%";
+                cg_emit("    v_%s = v_%s %s %s;\n", name, name, cop, in);
+            }
+            free(in);
+            cg_const_clear(name);
+        }
+        return;
+    }
+
+    if (cg_dse && op == '=' && !is_define_name(name) && !cg_is_read(name)) {
+        Value cv;
+        if (cg_const_eval(node->as.assign.value, &cv)) {
+            cg_const_set(name, cv);
+            return;
+        }
+        char *side = cg_expr(node->as.assign.value);
+        cg_emit("    free_value(%s);\n", side);
+        cg_const_clear(name);
+        return;
+    }
+
+    if (op == '+') {
+        char *v = cg_expr(node->as.assign.value);
+        cg_mark_read(name);
+        cg_emit("    qs_append_var(env, &local, ");
+        write_c_string(cg_out, name);
+        cg_emit(", %s);\n", v);
+        cg_const_clear(name);
+        return;
+    }
+
     char *value = cg_expr(node->as.assign.value);
     if (op != '=') {
+        cg_mark_read(name);
         char *cur = cg_newtemp();
         cg_emit("    Value %s = qs_get(env, &local, ", cur);
         write_c_string(cg_out, name);
@@ -1123,11 +2097,32 @@ static void cg_expr_stmt(ASTNode *node) {
     if (e && e->type == AST_METHOD_CALL &&
         e->as.method_call.object && e->as.method_call.object->type == AST_IDENT &&
         cg_is_mutating_method(e->as.method_call.method)) {
-        char *result = cg_method_call(e->as.method_call.object, e->as.method_call.method,
-                                      e->as.method_call.args, e->as.method_call.argc);
-        cg_emit("    qs_set(env, &local, ");
-        write_c_string(cg_out, e->as.method_call.object->as.string);
-        cg_emit(", %s);\n", result);
+        const char *vname = e->as.method_call.object->as.string;
+        int write_back = !cg_dse || is_define_name(vname) || cg_is_read(vname);
+        Value fv;
+        if (cg_try_fold_method_mutation(e, &fv)) {
+            if (write_back) {
+                char *r = cg_const_value_temp(fv);
+                cg_emit("    qs_set(env, &local, ");
+                write_c_string(cg_out, vname);
+                cg_emit(", %s);\n", r);
+            }
+            free_value(fv);
+            return;
+        }
+        cg_const_clear_all();
+        cg_mark_read(vname);
+        int argc = e->as.method_call.argc;
+        char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
+        for (int i = 0; i < argc; i++) temps[i] = cg_expr(e->as.method_call.args[i]);
+        cg_emit("    qs_method_call_inplace(env, &local, ");
+        write_c_string(cg_out, vname);
+        cg_emit(", ");
+        write_c_string(cg_out, e->as.method_call.method);
+        cg_emit(", ");
+        cg_emit_args_array(temps, argc);
+        cg_emit(", %d);\n", argc);
+        free(temps);
         return;
     }
     char *t = cg_expr(e);
@@ -1144,6 +2139,12 @@ static void cg_stmt(ASTNode *node) {
             cg_print(node);
             break;
         case AST_RETURN: {
+            if (cg_int_func_ret) {
+                char *ie = node->as.unary.operand ? cg_int_expr(node->as.unary.operand) : NULL;
+                cg_emit("    return %s;\n", ie ? ie : "0L");
+                if (ie) free(ie);
+                break;
+            }
             if (node->as.unary.operand) {
                 char *v = cg_expr(node->as.unary.operand);
                 cg_emit("    qs_ret = %s;\n", v);
@@ -1190,6 +2191,7 @@ static void cg_stmt(ASTNode *node) {
             cg_try(node);
             break;
         case AST_IMPORT: {
+            cg_has_import = 1;
             cg_emit("    qs_import(env, ");
             write_c_string(cg_out, node->as.string ? node->as.string : "");
             cg_emit(");\n");
@@ -1255,12 +2257,50 @@ static void cg_emit_func(CgFunc *f) {
     cg_in_func = 1;
     cg_loop_top = 0;
     cg_const_clear_all();
+    cg_promo_push();
     cg_block(f->body);
+    cg_promo_pop();
     cg_loop_top = saved_loop_top;
     cg_in_func = saved_in_func;
     cg_emit("qs_fn_end:\n");
     cg_emit("    g_qs_try_top = qs_saved_try;\n");
     cg_emit("    return qs_ret;\n");
+    cg_emit("}\n\n");
+}
+
+static void cg_emit_int_func(int i) {
+    CgFunc *f = &cg_funcs[i];
+    cg_emit("static long qs_int_%d(", i);
+    if (f->param_count == 0) cg_emit("void");
+    for (int p = 0; p < f->param_count; p++) {
+        if (p) cg_emit(", ");
+        cg_emit("long v_%s", f->params[p]);
+    }
+    cg_emit(") {\n");
+    for (int j = 0; j < cg_fi_promo_count[i]; j++) {
+        const char *nm = cg_fi_promo[i][j];
+        int is_param = 0;
+        for (int p = 0; p < f->param_count; p++) {
+            if (strcmp(f->params[p], nm) == 0) { is_param = 1; break; }
+        }
+        if (!is_param) cg_emit("    long v_%s = 0;\n", nm);
+    }
+    int saved_loop_top = cg_loop_top;
+    int saved_in_func = cg_in_func;
+    int saved_int_ret = cg_int_func_ret;
+    cg_in_func = 1;
+    cg_loop_top = 0;
+    cg_int_func_ret = 1;
+    cg_const_clear_all();
+    cg_promo_push();
+    for (int j = 0; j < cg_fi_promo_count[i]; j++) cg_promo_add(cg_fi_promo[i][j]);
+    cg_int_enabled = 1;
+    cg_block(f->body);
+    cg_promo_pop();
+    cg_int_func_ret = saved_int_ret;
+    cg_loop_top = saved_loop_top;
+    cg_in_func = saved_in_func;
+    cg_emit("    return 0L;\n");
     cg_emit("}\n\n");
 }
 
@@ -1310,14 +2350,44 @@ static int native_compile(const char *input_path, const char *output_path) {
     cg_loop = 0;
     cg_loop_top = 0;
     cg_in_func = 0;
+    cg_dse = 0;
+    cg_has_import = 0;
+    cg_has_lambda = 0;
+    cg_free_reads();
     cg_const_clear_all();
     cg_collect(ast);
+    cg_analyze_int_funcs();
+    cg_analyze_int(ast);
+
+    int scan_ok = 0;
+    char scan_path[4352];
+    snprintf(scan_path, sizeof(scan_path), "%s.scan", output_path);
+    FILE *scan = fopen(scan_path, "w");
+    if (scan) {
+        cg_out = scan;
+        cg_temp = 0;
+        cg_label = 0;
+        cg_loop = 0;
+        cg_loop_top = 0;
+        cg_in_func = 0;
+        cg_const_clear_all();
+        cg_block(ast);
+        for (int i = 0; i < cg_func_count; i++) cg_emit_func(&cg_funcs[i]);
+        for (int i = 0; i < cg_func_count; i++) if (cg_fi_int[i]) cg_emit_int_func(i);
+        fclose(scan);
+        cg_out = NULL;
+        remove(scan_path);
+        scan_ok = 1;
+    }
 
     FILE *out = fopen(output_path, "w");
     if (!out) {
         fprintf(stderr, "Cannot write '%s'\n", output_path);
         cg_func_count = 0;
         cg_class_count = 0;
+        cg_dse = 0;
+        cg_free_reads();
+        cg_const_clear_all();
         ast_free(ast);
         free_program(&program);
         g_program = NULL;
@@ -1379,6 +2449,17 @@ static int native_compile(const char *input_path, const char *output_path) {
     for (int i = 0; i < cg_func_count; i++) {
         cg_emit("static Value %s(Environment *env, Value *args, int argc);\n", cg_funcs[i].c_name);
     }
+    for (int i = 0; i < cg_func_count; i++) {
+        if (!cg_fi_int[i]) continue;
+        CgFunc *f = &cg_funcs[i];
+        cg_emit("static long qs_int_%d(", i);
+        if (f->param_count == 0) cg_emit("void");
+        for (int p = 0; p < f->param_count; p++) {
+            if (p) cg_emit(", ");
+            cg_emit("long");
+        }
+        cg_emit(");\n");
+    }
     cg_emit("\n");
 
     cg_emit("int main(void) {\n");
@@ -1408,6 +2489,14 @@ static int native_compile(const char *input_path, const char *output_path) {
 
     cg_in_func = 0;
     cg_loop_top = 0;
+    cg_temp = 0;
+    cg_label = 0;
+    cg_loop = 0;
+    cg_const_clear_all();
+    cg_dse = scan_ok && !cg_has_import && !cg_has_lambda;
+    for (int i = 0; i < cg_promo_count; i++) {
+        cg_emit("    long v_%s = 0;\n", cg_promo[i]);
+    }
     cg_block(ast);
 
     cg_emit("    g_qs_try_top = qs_saved_try;\n");
@@ -1423,6 +2512,9 @@ static int native_compile(const char *input_path, const char *output_path) {
 
     for (int i = 0; i < cg_func_count; i++) {
         cg_emit_func(&cg_funcs[i]);
+    }
+    for (int i = 0; i < cg_func_count; i++) {
+        if (cg_fi_int[i]) cg_emit_int_func(i);
     }
 
     fclose(out);
@@ -1441,7 +2533,12 @@ static int native_compile(const char *input_path, const char *output_path) {
     for (int i = 0; i < cg_class_count; i++) free(cg_classes[i]);
     cg_func_count = 0;
     cg_class_count = 0;
+    cg_dse = 0;
+    cg_free_reads();
     cg_const_clear_all();
+    cg_promo_reset();
+    cg_assign_list_free();
+    cg_fi_free();
 
     ast_free(ast);
     free_program(&program);

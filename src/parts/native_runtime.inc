@@ -107,12 +107,23 @@ static QS_UNUSED_FN Value qs_get(Environment *env, Environment *local, const cha
 }
 
 static QS_UNUSED_FN void qs_set(Environment *env, Environment *local, const char *name, Value value) {
-    Environment *target = (local && find_variable(local, name) >= 0) ? local : env;
-    if (is_define_name(name) && find_variable(target, name) >= 0) {
-        free_value(value);
-        char msg[256];
-        snprintf(msg, sizeof(msg), "definition '%s' already exists and cannot be changed", name);
-        qs_raise(msg);
+    Environment *target = env;
+    int idx = -1;
+    if (local) {
+        idx = find_variable(local, name);
+        if (idx >= 0) target = local;
+    }
+    if (idx < 0) idx = find_variable(env, name);
+    if (idx >= 0) {
+        if (is_define_name(name)) {
+            free_value(value);
+            char msg[256];
+            snprintf(msg, sizeof(msg), "definition '%s' already exists and cannot be changed", name);
+            qs_raise(msg);
+            return;
+        }
+        free_value(target->items[idx].value);
+        target->items[idx].value = value;
         return;
     }
     env_set(target, name, value);
@@ -323,6 +334,62 @@ static QS_UNUSED_FN Value qs_gte(Value left, Value right) {
     free_value(left);
     free_value(right);
     return result;
+}
+
+static QS_UNUSED_FN Value qs_bool_cmp(Value left, Value right, int op) {
+    if (left.type == VALUE_INTEGER && right.type == VALUE_INTEGER) {
+        long a = left.as.integer, b = right.as.integer;
+        int r = 0;
+        switch (op) {
+            case 0: r = (a == b); break;
+            case 1: r = (a != b); break;
+            case 2: r = (a < b); break;
+            case 3: r = (a > b); break;
+            case 4: r = (a <= b); break;
+            case 5: r = (a >= b); break;
+            default: break;
+        }
+        return make_bool(r);
+    }
+    switch (op) {
+        case 0: return qs_eq(left, right);
+        case 1: return qs_neq(left, right);
+        case 2: return qs_lt(left, right);
+        case 3: return qs_gt(left, right);
+        case 4: return qs_lte(left, right);
+        case 5: return qs_gte(left, right);
+        default: break;
+    }
+    free_value(left);
+    free_value(right);
+    return make_bool(0);
+}
+
+static QS_UNUSED_FN void qs_append_var(Environment *env, Environment *local,
+                                       const char *name, Value rhs) {
+    Environment *target = (local && find_variable(local, name) >= 0) ? local : env;
+    int idx = find_variable(target, name);
+    if (idx < 0 || is_define_name(name)) {
+        Value r = qs_add(qs_get(env, local, name), rhs);
+        qs_set(env, local, name, r);
+        return;
+    }
+    Value cur = target->items[idx].value;
+    if (cur.type == VALUE_STRING && rhs.type == VALUE_STRING) {
+        size_t la = cur.as.string ? strlen(cur.as.string) : 0;
+        size_t lb = rhs.as.string ? strlen(rhs.as.string) : 0;
+        char *na = realloc(cur.as.string, la + lb + 1);
+        if (na) {
+            if (lb) memcpy(na + la, rhs.as.string, lb);
+            na[la + lb] = '\0';
+            target->items[idx].value.as.string = na;
+            free_value(rhs);
+            return;
+        }
+    }
+    Value r = qs_add(clone_value(cur), rhs);
+    free_value(target->items[idx].value);
+    target->items[idx].value = r;
 }
 
 static QS_UNUSED_FN Value qs_in(Value container, Value item) {
@@ -748,6 +815,50 @@ static QS_UNUSED_FN Value qs_method_call(Environment *env, Value obj, const char
         qs_raise(msg);
     }
     return obj;
+}
+
+static QS_UNUSED_FN void qs_method_call_inplace(Environment *env, Environment *local,
+                                                const char *name, const char *method,
+                                                Value *args, int argc) {
+    Environment *target = (local && find_variable(local, name) >= 0) ? local : env;
+    int idx = find_variable(target, name);
+    if (idx < 0) {
+        for (int i = 0; i < argc; i++) free_value(args[i]);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "unknown variable '%s'", name);
+        qs_raise(msg);
+        return;
+    }
+    if (is_define_name(name)) {
+        for (int i = 0; i < argc; i++) free_value(args[i]);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "definition '%s' already exists and cannot be changed", name);
+        qs_raise(msg);
+        return;
+    }
+    Value *slot = &target->items[idx].value;
+    if (slot->type == VALUE_LIST && argc == 1 && strcmp(method, "append") == 0) {
+        list_push(&slot->as.list, args[0]);
+        return;
+    }
+    if (slot->type == VALUE_OBJECT) {
+        Value cur = clone_value(*slot);
+        Value result = qs_method_call(env, cur, method, args, argc);
+        env_set(target, name, result);
+        return;
+    }
+    ValueList margs = {0};
+    for (int i = 0; i < argc; i++) list_push(&margs, args[i]);
+    ParseError perr = {0};
+    Parser parser = {"", 0, 0, env, &perr, -1};
+    int ok = apply_method(&parser, slot, method, &margs);
+    for (size_t i = 0; i < margs.count; i++) free_value(margs.items[i]);
+    free(margs.items);
+    if (!ok) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "%s", perr.message[0] ? perr.message : "method call failed");
+        qs_raise(msg);
+    }
 }
 
 static QS_UNUSED_FN Value qs_new(Environment *env, const char *class_name, Value *args, int argc) {

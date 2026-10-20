@@ -111,6 +111,15 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog);
 static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog);
 static void astc_compile_block(ASTNode *block, BytecodeProgram *prog);
 
+static int astc_is_mutating_method(const char *m) {
+    return strcmp(m, "append") == 0 || strcmp(m, "push") == 0 ||
+           strcmp(m, "pop") == 0 || strcmp(m, "remove") == 0 ||
+           strcmp(m, "extend") == 0 || strcmp(m, "sort") == 0 ||
+           strcmp(m, "insert") == 0 || strcmp(m, "clear") == 0 ||
+           strcmp(m, "shuffle") == 0 || strcmp(m, "reverse") == 0 ||
+           strcmp(m, "fill") == 0 || strcmp(m, "splice") == 0;
+}
+
 static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
     if (!node) {
         emit(prog, OP_LOAD_CONST, make_null(), 0, 0);
@@ -367,11 +376,33 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
         }
 
         case AST_METHOD_CALL: {
+            ASTNode *obj = node->as.method_call.object;
+            int define_mutation = obj && obj->type == AST_IDENT &&
+                astc_is_mutating_method(node->as.method_call.method) &&
+                is_define_name(obj->as.string);
             astc_compile_expr(node->as.method_call.object, prog);
             for (int i = 0; i < node->as.method_call.argc; i++) {
                 astc_compile_expr(node->as.method_call.args[i], prog);
             }
+            if (define_mutation) {
+                char dm[300];
+                snprintf(dm, sizeof(dm), "definition '%s' already exists and cannot be changed", obj->as.string);
+                int didx = add_constant(prog, make_string_owned(qs_strdup(dm)));
+                emit(prog, OP_LOAD_CONST, make_null(), didx, node->line);
+                emit(prog, OP_THROW, make_null(), 0, node->line);
+                break;
+            }
             emit(prog, OP_CALL_METHOD, make_string_owned(qs_strdup(node->as.method_call.method)), node->as.method_call.argc, node->line);
+            if (obj && obj->type == AST_IDENT &&
+                astc_is_mutating_method(node->as.method_call.method)) {
+                emit(prog, OP_DUP, make_null(), 0, node->line);
+                int slot = locals_find(obj->as.string);
+                if (slot >= 0) {
+                    emit(prog, OP_STORE_LOCAL, make_null(), slot, node->line);
+                } else {
+                    emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(obj->as.string)), 0, node->line);
+                }
+            }
             break;
         }
 
@@ -799,28 +830,6 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
 
         case AST_EXPR_STMT: {
             ASTNode *e = node->as.unary.operand;
-
-            if (e && e->type == AST_METHOD_CALL &&
-                e->as.method_call.object && e->as.method_call.object->type == AST_IDENT) {
-                const char *m = e->as.method_call.method;
-                int mutates = (strcmp(m, "append") == 0 || strcmp(m, "push") == 0 ||
-                               strcmp(m, "pop") == 0 || strcmp(m, "remove") == 0 ||
-                               strcmp(m, "extend") == 0 || strcmp(m, "sort") == 0 ||
-                               strcmp(m, "insert") == 0 || strcmp(m, "clear") == 0 ||
-                               strcmp(m, "shuffle") == 0 || strcmp(m, "reverse") == 0 ||
-                               strcmp(m, "fill") == 0 || strcmp(m, "splice") == 0);
-                if (mutates) {
-                    const char *vname = e->as.method_call.object->as.string;
-                    astc_compile_expr(e, prog);
-                    int slot = locals_find(vname);
-                    if (slot >= 0) {
-                        emit(prog, OP_STORE_LOCAL, make_null(), slot, node->line);
-                    } else {
-                        emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(vname)), 0, node->line);
-                    }
-                    break;
-                }
-            }
             astc_compile_expr(e, prog);
             emit(prog, OP_POP, make_null(), 0, node->line);
             break;

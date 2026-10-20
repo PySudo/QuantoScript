@@ -1881,9 +1881,27 @@ object_method:
 }
 
 static int parse_postfix(Parser *parser, Value *out) {
+    size_t primary_start = parser->pos;
     if (!parse_primary(parser, out)) {
         return 0;
     }
+
+    int writable = 0;
+    if (parser->var_index >= 0) {
+        writable = 1;
+        for (size_t scan = primary_start; scan < parser->pos; scan++) {
+            char scan_ch = parser->text[scan];
+            if (scan_ch == ' ' || scan_ch == '\t') {
+                continue;
+            }
+            if (!is_name_part(scan_ch)) {
+                writable = 0;
+                break;
+            }
+        }
+    }
+    int target_index = parser->var_index;
+    int target_global = g_var_is_global;
 
     while (1) {
         if (match_char(parser, '.')) {
@@ -1918,11 +1936,21 @@ static int parse_postfix(Parser *parser, Value *out) {
                 return 0;
             }
 
-            if (parser->var_index >= 0 && is_mutation) {
-                Environment *mutation_env = (g_var_is_global && g_root_env) ? g_root_env : parser->env;
-                free_value(mutation_env->items[parser->var_index].value);
-                mutation_env->items[parser->var_index].value = clone_value(*out);
+            if (writable && is_mutation) {
+                Environment *mutation_env = (target_global && g_root_env) ? g_root_env : parser->env;
+                if (mutation_env->items[target_index].name &&
+                    is_define_name(mutation_env->items[target_index].name)) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "definition '%s' already exists and cannot be changed",
+                             mutation_env->items[target_index].name);
+                    parser_error(parser, msg);
+                    free_value(*out);
+                    return 0;
+                }
+                free_value(mutation_env->items[target_index].value);
+                mutation_env->items[target_index].value = clone_value(*out);
             }
+            writable = 0;
             parser->var_index = -1;
             g_var_is_global = 0;
             continue;
@@ -1931,6 +1959,10 @@ static int parse_postfix(Parser *parser, Value *out) {
         if (!match_char(parser, '[')) {
             break;
         }
+
+        writable = 0;
+        parser->var_index = -1;
+        g_var_is_global = 0;
 
         int has_start = 0;
         long raw_start = 0;
