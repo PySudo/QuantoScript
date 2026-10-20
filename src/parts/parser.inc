@@ -774,8 +774,10 @@ static int parse_primary(Parser *parser, Value *out) {
                     *out = make_integer((long)strlen(arg.as.string));
                 } else if (arg.type == VALUE_LIST) {
                     *out = make_integer((long)arg.as.list.count);
+                } else if (arg.type == VALUE_DICT) {
+                    *out = make_integer((long)arg.as.dict.count);
                 } else {
-                    parser_error(parser, "len needs a string or list");
+                    parser_error(parser, "len needs a string, list, or map");
                     free_value(arg);
                     free(function_name);
                     return 0;

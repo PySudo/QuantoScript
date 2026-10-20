@@ -1128,6 +1128,15 @@ static char *cg_call_expr(ASTNode *node) {
     int argc = node->as.call.argc;
     cg_mark_read(node->as.call.name);
 
+    if (argc == 1 && strcmp(node->as.call.name, "len") == 0 &&
+        cg_func_index("len") < 0 && !cg_is_class("len")) {
+        char *arg = cg_expr(node->as.call.args[0]);
+        cg_const_clear_all();
+        char *t = cg_newtemp();
+        cg_emit("    Value %s = qs_len_value(%s);\n", t, arg);
+        return t;
+    }
+
     {
         int fi = cg_find_int_func(node->as.call.name);
         if (fi >= 0 && argc == cg_funcs[fi].param_count) {
@@ -1165,6 +1174,46 @@ static char *cg_call_expr(ASTNode *node) {
     return t;
 }
 
+typedef struct {
+    const char *name;
+    int argc;
+    const char *helper;
+    const char *receiver;
+} CgFastMethod;
+
+static const CgFastMethod cg_fast_methods[] = {
+    {"has", 1, "qs_dict_has", "VALUE_DICT"},
+    {"get", 1, "qs_dict_get", "VALUE_DICT"},
+    {"get", 2, "qs_dict_get_or", "VALUE_DICT"},
+    {"keys", 0, "qs_dict_keys", "VALUE_DICT"},
+    {"values", 0, "qs_dict_values", "VALUE_DICT"},
+    {"items", 0, "qs_dict_items", "VALUE_DICT"},
+    {"split", 1, "qs_str_split", "VALUE_STRING"},
+    {"replace", 2, "qs_str_replace", "VALUE_STRING"},
+    {"substring", 1, "qs_str_substring", "VALUE_STRING"},
+    {"substring", 2, "qs_str_substring2", "VALUE_STRING"},
+    {"indexOf", 1, "qs_str_index_of", "VALUE_STRING"},
+    {"startsWith", 1, "qs_str_starts_with", "VALUE_STRING"},
+    {"endsWith", 1, "qs_str_ends_with", "VALUE_STRING"},
+    {"trimStart", 0, "qs_str_trim_start", "VALUE_STRING"},
+    {"trimEnd", 0, "qs_str_trim_end", "VALUE_STRING"},
+    {"title", 0, "qs_str_title", "VALUE_STRING"},
+    {"reverse", 0, "qs_str_reverse", "VALUE_STRING"},
+    {"repeat", 1, "qs_str_repeat", "VALUE_STRING"},
+    {"contains", 1, "qs_str_contains", "VALUE_STRING"},
+    {"join", 1, "qs_str_join", "VALUE_STRING"},
+    {NULL, 0, NULL, NULL}
+};
+
+static const CgFastMethod *cg_fast_method_find(const char *name, int argc) {
+    for (int i = 0; cg_fast_methods[i].name; i++) {
+        if (cg_fast_methods[i].argc == argc && strcmp(cg_fast_methods[i].name, name) == 0) {
+            return &cg_fast_methods[i];
+        }
+    }
+    return NULL;
+}
+
 static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args, int argc) {
     char *obj = cg_expr(object);
     char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
@@ -1172,11 +1221,26 @@ static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args,
 
     cg_const_clear_all();
     char *t = cg_newtemp();
-    cg_emit("    Value %s = qs_method_call(env, %s, ", t, obj);
-    write_c_string(cg_out, method);
-    cg_emit(", ");
-    cg_emit_args_array(temps, argc);
-    cg_emit(", %d);\n", argc);
+    const CgFastMethod *fast = cg_fast_method_find(method, argc);
+    if (fast) {
+        cg_emit("    Value %s = (%s.type == %s", t, obj, fast->receiver);
+        if (strcmp(fast->helper, "qs_str_join") == 0) {
+            cg_emit(" && %s.type == VALUE_LIST", temps[0]);
+        }
+        cg_emit(") ? %s(%s", fast->helper, obj);
+        for (int i = 0; i < argc; i++) cg_emit(", %s", temps[i]);
+        cg_emit(") : qs_method_call(env, %s, ", obj);
+        write_c_string(cg_out, method);
+        cg_emit(", ");
+        cg_emit_args_array(temps, argc);
+        cg_emit(", %d);\n", argc);
+    } else {
+        cg_emit("    Value %s = qs_method_call(env, %s, ", t, obj);
+        write_c_string(cg_out, method);
+        cg_emit(", ");
+        cg_emit_args_array(temps, argc);
+        cg_emit(", %d);\n", argc);
+    }
     free(temps);
     return t;
 }

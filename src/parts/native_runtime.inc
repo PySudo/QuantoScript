@@ -392,6 +392,329 @@ static QS_UNUSED_FN void qs_append_var(Environment *env, Environment *local,
     target->items[idx].value = r;
 }
 
+static QS_UNUSED_FN Value qs_len_value(Value value) {
+    Value out;
+    if (value.type == VALUE_STRING) {
+        out = make_integer((long)strlen(value.as.string ? value.as.string : ""));
+    } else if (value.type == VALUE_LIST) {
+        out = make_integer((long)value.as.list.count);
+    } else if (value.type == VALUE_DICT) {
+        out = make_integer((long)value.as.dict.count);
+    } else {
+        free_value(value);
+        qs_raise("len needs a string, list, or map");
+        return make_null();
+    }
+    free_value(value);
+    return out;
+}
+
+static QS_UNUSED_FN char *qs_text_arg(Value value, int *owned) {
+    if (value.type == VALUE_STRING) {
+        *owned = 0;
+        return value.as.string ? value.as.string : "";
+    }
+    *owned = 1;
+    return value_to_string(value);
+}
+
+static QS_UNUSED_FN Value qs_dict_has(Value dict, Value key_value) {
+    int owned;
+    char *key = qs_text_arg(key_value, &owned);
+    int found = dict_find(&dict.as.dict, key) >= 0;
+    if (owned) free(key);
+    free_value(key_value);
+    free_value(dict);
+    return make_bool(found);
+}
+
+static QS_UNUSED_FN Value qs_dict_get(Value dict, Value key_value) {
+    int owned;
+    char *key = qs_text_arg(key_value, &owned);
+    int index = dict_find(&dict.as.dict, key);
+    if (owned) free(key);
+    free_value(key_value);
+    Value result = index >= 0 ? clone_value(dict.as.dict.items[index].value) : make_null();
+    free_value(dict);
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_dict_get_or(Value dict, Value key_value, Value fallback) {
+    int owned;
+    char *key = qs_text_arg(key_value, &owned);
+    int index = dict_find(&dict.as.dict, key);
+    if (owned) free(key);
+    free_value(key_value);
+    Value result = clone_value(index >= 0 ? dict.as.dict.items[index].value : fallback);
+    free_value(fallback);
+    free_value(dict);
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_dict_keys(Value dict) {
+    ValueList keys = {0};
+    for (size_t i = 0; i < dict.as.dict.count; i++) {
+        list_push(&keys, make_string_owned(qs_strdup(dict.as.dict.items[i].key)));
+    }
+    free_value(dict);
+    Value result;
+    result.type = VALUE_LIST;
+    result.as.list = keys;
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_dict_values(Value dict) {
+    ValueList vals = {0};
+    for (size_t i = 0; i < dict.as.dict.count; i++) {
+        list_push(&vals, clone_value(dict.as.dict.items[i].value));
+    }
+    free_value(dict);
+    Value result;
+    result.type = VALUE_LIST;
+    result.as.list = vals;
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_dict_items(Value dict) {
+    ValueList pairs = {0};
+    for (size_t i = 0; i < dict.as.dict.count; i++) {
+        ValueList pair = {0};
+        list_push(&pair, make_string_owned(qs_strdup(dict.as.dict.items[i].key)));
+        list_push(&pair, clone_value(dict.as.dict.items[i].value));
+        Value entry;
+        entry.type = VALUE_LIST;
+        entry.as.list = pair;
+        list_push(&pairs, entry);
+    }
+    free_value(dict);
+    Value result;
+    result.type = VALUE_LIST;
+    result.as.list = pairs;
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_str_contains(Value text, Value needle_value) {
+    int owned;
+    char *needle = qs_text_arg(needle_value, &owned);
+    int found = strstr(text.as.string ? text.as.string : "", needle) != NULL;
+    if (owned) free(needle);
+    free_value(needle_value);
+    free_value(text);
+    return make_bool(found);
+}
+
+static QS_UNUSED_FN Value qs_str_index_of(Value text, Value needle_value) {
+    const char *src = text.as.string ? text.as.string : "";
+    int owned;
+    char *needle = qs_text_arg(needle_value, &owned);
+    const char *pos = strstr(src, needle);
+    long index = pos ? (long)(pos - src) + 1 : 0;
+    if (owned) free(needle);
+    free_value(needle_value);
+    free_value(text);
+    return make_integer(index);
+}
+
+static QS_UNUSED_FN Value qs_substring_range(Value text, long start, long end) {
+    const char *src = text.as.string ? text.as.string : "";
+    long len = (long)strlen(src);
+    if (start < 1) start = 1;
+    if (end > len) end = len;
+    if (start > end) start = end;
+    char *sub = qs_strndup(src + start - 1, (size_t)(end - start + 1));
+    free_value(text);
+    return make_string_owned(sub);
+}
+
+static QS_UNUSED_FN Value qs_str_substring(Value text, Value start_value) {
+    long start = start_value.as.integer;
+    free_value(start_value);
+    long end = (long)strlen(text.as.string ? text.as.string : "");
+    return qs_substring_range(text, start, end);
+}
+
+static QS_UNUSED_FN Value qs_str_substring2(Value text, Value start_value, Value end_value) {
+    long start = start_value.as.integer;
+    long end = end_value.as.integer;
+    free_value(start_value);
+    free_value(end_value);
+    return qs_substring_range(text, start, end);
+}
+
+static QS_UNUSED_FN Value qs_str_starts_with(Value text, Value prefix_value) {
+    const char *src = text.as.string ? text.as.string : "";
+    int owned;
+    char *prefix = qs_text_arg(prefix_value, &owned);
+    int match = strncmp(src, prefix, strlen(prefix)) == 0;
+    if (owned) free(prefix);
+    free_value(prefix_value);
+    free_value(text);
+    return make_bool(match);
+}
+
+static QS_UNUSED_FN Value qs_str_ends_with(Value text, Value suffix_value) {
+    const char *src = text.as.string ? text.as.string : "";
+    int owned;
+    char *suffix = qs_text_arg(suffix_value, &owned);
+    size_t src_len = strlen(src);
+    size_t suffix_len = strlen(suffix);
+    int match = src_len >= suffix_len && strcmp(src + src_len - suffix_len, suffix) == 0;
+    if (owned) free(suffix);
+    free_value(suffix_value);
+    free_value(text);
+    return make_bool(match);
+}
+
+static QS_UNUSED_FN Value qs_str_trim_start(Value text) {
+    const char *src = text.as.string ? text.as.string : "";
+    while (*src && isspace((unsigned char)*src)) src++;
+    char *trimmed = qs_strdup(src);
+    free_value(text);
+    return make_string_owned(trimmed);
+}
+
+static QS_UNUSED_FN Value qs_str_trim_end(Value text) {
+    char *trimmed = qs_strdup(text.as.string ? text.as.string : "");
+    size_t len = strlen(trimmed);
+    while (len > 0 && isspace((unsigned char)trimmed[len - 1])) len--;
+    trimmed[len] = '\0';
+    free_value(text);
+    return make_string_owned(trimmed);
+}
+
+static QS_UNUSED_FN Value qs_str_title(Value text) {
+    char *titled = qs_strdup(text.as.string ? text.as.string : "");
+    int new_word = 1;
+    for (char *p = titled; *p; p++) {
+        if (isalpha((unsigned char)*p)) {
+            *p = (char)(new_word ? toupper((unsigned char)*p) : tolower((unsigned char)*p));
+            new_word = 0;
+        } else {
+            new_word = 1;
+        }
+    }
+    free_value(text);
+    return make_string_owned(titled);
+}
+
+static QS_UNUSED_FN Value qs_str_split(Value text, Value separator_value) {
+    int owned;
+    char *separator = qs_text_arg(separator_value, &owned);
+    const char *src = text.as.string ? text.as.string : "";
+    size_t separator_len = strlen(separator);
+    ValueList parts = {0};
+    if (separator_len == 0) {
+        for (size_t i = 0; src[i]; i++) {
+            char single[2] = {src[i], '\0'};
+            list_push(&parts, make_string_owned(qs_strdup(single)));
+        }
+    } else {
+        const char *start = src;
+        const char *found;
+        while ((found = strstr(start, separator)) != NULL) {
+            list_push(&parts, make_string_owned(qs_strndup(start, (size_t)(found - start))));
+            start = found + separator_len;
+        }
+        list_push(&parts, make_string_owned(qs_strdup(start)));
+    }
+    if (owned) free(separator);
+    free_value(separator_value);
+    free_value(text);
+    Value result;
+    result.type = VALUE_LIST;
+    result.as.list = parts;
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_str_replace(Value text, Value from_value, Value to_value) {
+    int from_owned;
+    int to_owned;
+    char *from = qs_text_arg(from_value, &from_owned);
+    char *to = qs_text_arg(to_value, &to_owned);
+    const char *src = text.as.string ? text.as.string : "";
+    size_t from_len = strlen(from);
+    size_t to_len = strlen(to);
+    size_t cap = strlen(src) + 1;
+    char *result = malloc(cap);
+    if (!result) { fprintf(stderr, "out of memory\n"); exit(2); }
+    result[0] = '\0';
+    while (1) {
+        const char *pos = strstr(src, from);
+        if (!pos) {
+            strcat(result, src);
+            break;
+        }
+        size_t prefix = (size_t)(pos - src);
+        if (strlen(result) + prefix + to_len + 1 > cap) {
+            cap = (strlen(result) + prefix + to_len + 1) * 2;
+            char *grown = realloc(result, cap);
+            if (!grown) { fprintf(stderr, "out of memory\n"); exit(2); }
+            result = grown;
+        }
+        strncat(result, src, prefix);
+        strcat(result, to);
+        src = pos + from_len;
+    }
+    if (from_owned) free(from);
+    if (to_owned) free(to);
+    free_value(from_value);
+    free_value(to_value);
+    free_value(text);
+    return make_string_owned(result);
+}
+
+static QS_UNUSED_FN Value qs_str_reverse(Value text) {
+    const char *src = text.as.string ? text.as.string : "";
+    size_t len = strlen(src);
+    char *rev = malloc(len + 1);
+    if (!rev) { fprintf(stderr, "out of memory\n"); exit(2); }
+    for (size_t i = 0; i < len; i++) rev[i] = src[len - 1 - i];
+    rev[len] = '\0';
+    free_value(text);
+    return make_string_owned(rev);
+}
+
+static QS_UNUSED_FN Value qs_str_repeat(Value text, Value count_value) {
+    long times = count_value.as.integer;
+    free_value(count_value);
+    if (times < 0) times = 0;
+    const char *src = text.as.string ? text.as.string : "";
+    size_t text_len = strlen(src);
+    char *repeated = malloc(text_len * (size_t)times + 1);
+    if (!repeated) { fprintf(stderr, "out of memory\n"); exit(2); }
+    for (long i = 0; i < times; i++) {
+        memcpy(repeated + (size_t)i * text_len, src, text_len);
+    }
+    repeated[text_len * (size_t)times] = '\0';
+    free_value(text);
+    return make_string_owned(repeated);
+}
+
+static QS_UNUSED_FN Value qs_str_join(Value separator_value, Value items) {
+    const char *separator = separator_value.as.string ? separator_value.as.string : "";
+    size_t separator_len = strlen(separator);
+    size_t total = 0;
+    char **parts = calloc(items.as.list.count, sizeof(char *));
+    if (items.as.list.count && !parts) { fprintf(stderr, "out of memory\n"); exit(2); }
+    for (size_t i = 0; i < items.as.list.count; i++) {
+        parts[i] = value_to_string(items.as.list.items[i]);
+        total += strlen(parts[i]);
+        if (i) total += separator_len;
+    }
+    char *joined = malloc(total + 1);
+    if (!joined) { fprintf(stderr, "out of memory\n"); exit(2); }
+    joined[0] = '\0';
+    for (size_t i = 0; i < items.as.list.count; i++) {
+        if (i) strcat(joined, separator);
+        strcat(joined, parts[i]);
+        free(parts[i]);
+    }
+    free(parts);
+    free_value(items);
+    free_value(separator_value);
+    return make_string_owned(joined);
+}
+
 static QS_UNUSED_FN Value qs_in(Value container, Value item) {
     Value result = make_bool(value_contains(item, container));
     free_value(container);

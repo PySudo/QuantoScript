@@ -4,6 +4,16 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- `qs native` now recognizes the common built-in map and string methods (`has`, `get`, `keys`, `values`, `items`, `split`, `join`, `contains`, `indexOf`, `substring`, `startsWith`, `endsWith`, `trimStart`, `trimEnd`, `title`, `replace`, `repeat`, `reverse`) and emits direct calls to specialized C helpers instead of the generic `qs_method_call` dispatcher. Each call keeps a runtime type guard and falls back to the generic path when the receiver is not the expected type, so behaviour is unchanged. `len(...)` is also inlined for strings, lists, and maps.
+
+### Bug Fixes
+- `len(map)` now works on the interpreter; it previously failed with `len needs a string or list`. All three engines accept maps and report `len needs a string, list, or map` for other types.
+
+### Performance
+- New `map` and `strm` benchmarks in the benchmark suite.
+- Native string-method benchmark: 81 ms -> 74 ms. Native map benchmark: 2.75 s -> 2.52 s; map access is still dominated by value cloning on every `get`.
+
 ## [2.1.0] - 2026-10-20
 
 ### Features
