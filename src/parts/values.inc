@@ -18,10 +18,11 @@ static void object_registry_free_all(void) {
         ObjectData *d = g_object_registry[i];
         free(d->class_name);
         for (size_t j = 0; j < d->fields.count; j++) {
-            free(d->fields.items[j].key);
-            free_value(d->fields.items[j].value);
+            free(d->fields.entries[j].key);
+            free_value(d->fields.entries[j].value);
         }
-        free(d->fields.items);
+        free(d->fields.entries);
+        free(d->fields.index_buckets);
         free(d);
     }
     g_object_count = 0;
@@ -37,10 +38,11 @@ static void free_value(Value value) {
         free(value.as.list.items);
     } else if (value.type == VALUE_DICT) {
         for (size_t i = 0; i < value.as.dict.count; i++) {
-            free(value.as.dict.items[i].key);
-            free_value(value.as.dict.items[i].value);
+            free(value.as.dict.entries[i].key);
+            free_value(value.as.dict.entries[i].value);
         }
-        free(value.as.dict.items);
+        free(value.as.dict.entries);
+        free(value.as.dict.index_buckets);
     } else if (value.type == VALUE_LAMBDA) {
         for (size_t i = 0; i < value.as.lambda.param_count; i++) {
             free(value.as.lambda.param_names[i]);
@@ -106,9 +108,11 @@ static Value make_list_empty(void) {
 static Value make_dict_empty(void) {
     Value value;
     value.type = VALUE_DICT;
-    value.as.dict.items = NULL;
+    value.as.dict.entries = NULL;
     value.as.dict.count = 0;
     value.as.dict.capacity = 0;
+    value.as.dict.index_capacity = 0;
+    value.as.dict.index_buckets = NULL;
     return value;
 }
 
@@ -135,9 +139,11 @@ static Value make_object(const char *class_name) {
     value.type = VALUE_OBJECT;
     value.as.object.data = malloc(sizeof(ObjectData));
     value.as.object.data->class_name = qs_strdup(class_name);
-    value.as.object.data->fields.items = NULL;
+    value.as.object.data->fields.entries = NULL;
     value.as.object.data->fields.count = 0;
     value.as.object.data->fields.capacity = 0;
+    value.as.object.data->fields.index_capacity = 0;
+    value.as.object.data->fields.index_buckets = NULL;
     object_registry_add(value.as.object.data);
     return value;
 }
@@ -161,14 +167,17 @@ static Value clone_value(Value value) {
     } else if (value.type == VALUE_DICT) {
         copy.as.dict.count = value.as.dict.count;
         copy.as.dict.capacity = value.as.dict.count;
-        copy.as.dict.items = calloc(value.as.dict.count, sizeof(DictEntry));
-        if (value.as.dict.count && !copy.as.dict.items) {
+        copy.as.dict.index_capacity = 0;
+        copy.as.dict.index_buckets = NULL;
+        copy.as.dict.entries = calloc(value.as.dict.count, sizeof(DictEntry));
+        if (value.as.dict.count && !copy.as.dict.entries) {
             fprintf(stderr, "out of memory\n");
             exit(2);
         }
         for (size_t i = 0; i < value.as.dict.count; i++) {
-            copy.as.dict.items[i].key = qs_strdup(value.as.dict.items[i].key);
-            copy.as.dict.items[i].value = clone_value(value.as.dict.items[i].value);
+            copy.as.dict.entries[i].key = qs_strdup(value.as.dict.entries[i].key);
+            copy.as.dict.entries[i].value = clone_value(value.as.dict.entries[i].value);
+            copy.as.dict.entries[i].hash = value.as.dict.entries[i].hash;
         }
     } else if (value.type == VALUE_LAMBDA) {
         copy.as.lambda.param_count = value.as.lambda.param_count;
@@ -441,11 +450,50 @@ static void list_push(ValueList *list, Value value) {
     list->items[list->count++] = value;
 }
 
-static int dict_find(const ValueDict *dict, const char *key) {
+static unsigned long long dict_hash_string(const char *key) {
+    unsigned long long h = 1469598103934665603ULL;
+    while (*key) {
+        h ^= (unsigned char)*key++;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static void dict_rebuild_index(ValueDict *dict, size_t index_capacity) {
+    if (dict->index_buckets) free(dict->index_buckets);
+    dict->index_capacity = index_capacity;
+    dict->index_buckets = NULL;
+    if (index_capacity == 0) return;
+    dict->index_buckets = malloc(index_capacity * sizeof(int));
+    if (!dict->index_buckets) {
+        fprintf(stderr, "out of memory\n");
+        exit(2);
+    }
+    for (size_t i = 0; i < index_capacity; i++) dict->index_buckets[i] = -1;
     for (size_t i = 0; i < dict->count; i++) {
-        if (strcmp(dict->items[i].key, key) == 0) {
-            return (int)i;
+        size_t slot = (size_t)(dict->entries[i].hash & (unsigned long long)(index_capacity - 1));
+        while (dict->index_buckets[slot] >= 0) slot = (slot + 1) & (index_capacity - 1);
+        dict->index_buckets[slot] = (int)i;
+    }
+}
+
+static int dict_find(const ValueDict *dict, const char *key) {
+    if (!dict) return -1;
+    if (dict->index_capacity == 0) {
+        for (size_t i = 0; i < dict->count; i++) {
+            if (strcmp(dict->entries[i].key, key) == 0) return (int)i;
         }
+        return -1;
+    }
+    unsigned long long hash = dict_hash_string(key);
+    size_t mask = dict->index_capacity - 1;
+    size_t slot = (size_t)(hash & (unsigned long long)mask);
+    while (dict->index_buckets[slot] >= 0) {
+        int idx = dict->index_buckets[slot];
+        if (dict->entries[idx].hash == hash && strcmp(dict->entries[idx].key, key) == 0) {
+            return idx;
+        }
+        slot = (slot + 1) & mask;
     }
     return -1;
 }
@@ -453,23 +501,44 @@ static int dict_find(const ValueDict *dict, const char *key) {
 static void dict_set(ValueDict *dict, const char *key, Value value) {
     int index = dict_find(dict, key);
     if (index >= 0) {
-        free_value(dict->items[index].value);
-        dict->items[index].value = value;
+        free_value(dict->entries[index].value);
+        dict->entries[index].value = value;
         return;
     }
     if (dict->count == dict->capacity) {
         size_t next_capacity = dict->capacity ? dict->capacity * 2 : 4;
-        DictEntry *next = realloc(dict->items, next_capacity * sizeof(DictEntry));
+        DictEntry *next = realloc(dict->entries, next_capacity * sizeof(DictEntry));
         if (!next) {
             fprintf(stderr, "out of memory\n");
             exit(2);
         }
-        dict->items = next;
+        dict->entries = next;
         dict->capacity = next_capacity;
     }
-    dict->items[dict->count].key = qs_strdup(key);
-    dict->items[dict->count].value = value;
+    unsigned long long hash = dict_hash_string(key);
+    dict->entries[dict->count].key = qs_strdup(key);
+    dict->entries[dict->count].value = value;
+    dict->entries[dict->count].hash = hash;
     dict->count++;
+    if (dict->count * 4 >= dict->index_capacity * 3) {
+        size_t target = dict->index_capacity ? dict->index_capacity * 2 : 16;
+        while (dict->count * 4 >= target * 3) target *= 2;
+        dict_rebuild_index(dict, target);
+    } else if (dict->index_capacity) {
+        size_t slot = (size_t)(hash & (unsigned long long)(dict->index_capacity - 1));
+        while (dict->index_buckets[slot] >= 0) slot = (slot + 1) & (dict->index_capacity - 1);
+        dict->index_buckets[slot] = (int)(dict->count - 1);
+    }
+}
+
+static void dict_remove_at(ValueDict *dict, size_t index) {
+    free(dict->entries[index].key);
+    free_value(dict->entries[index].value);
+    for (size_t i = index + 1; i < dict->count; i++) {
+        dict->entries[i - 1] = dict->entries[i];
+    }
+    dict->count--;
+    if (dict->index_capacity) dict_rebuild_index(dict, dict->index_capacity);
 }
 
 static void param_push(Function *function, Param param) {

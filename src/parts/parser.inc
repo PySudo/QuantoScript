@@ -157,8 +157,8 @@ static char *value_to_string(Value value) {
                     if (len + 2 >= cap) { cap *= 2; result = realloc(result, cap); }
                     strcat(result, ", ");
                 }
-                char *k = value_to_string(make_string_owned(qs_strdup(value.as.dict.items[i].key)));
-                char *v = value_to_string(value.as.dict.items[i].value);
+                char *k = value_to_string(make_string_owned(qs_strdup(value.as.dict.entries[i].key)));
+                char *v = value_to_string(value.as.dict.entries[i].value);
                 size_t rlen = strlen(result);
                 size_t klen = strlen(k);
                 size_t vlen = strlen(v);
@@ -219,8 +219,8 @@ static int values_equal(Value left, Value right) {
         case VALUE_DICT: {
             if (left.as.dict.count != right.as.dict.count) return 0;
             for (size_t i = 0; i < left.as.dict.count; i++) {
-                int found = dict_find(&right.as.dict, left.as.dict.items[i].key);
-                if (found < 0 || !values_equal(left.as.dict.items[i].value, right.as.dict.items[found].value)) return 0;
+                int found = dict_find(&right.as.dict, left.as.dict.entries[i].key);
+                if (found < 0 || !values_equal(left.as.dict.entries[i].value, right.as.dict.entries[found].value)) return 0;
             }
             return 1;
         }
@@ -602,7 +602,7 @@ static int parse_primary(Parser *parser, Value *out) {
                     } else if (collection.type == VALUE_LIST) {
                         env_set(parser->env, var_name, clone_value(collection.as.list.items[n]));
                     } else if (collection.type == VALUE_DICT) {
-                        env_set(parser->env, var_name, make_string_owned(qs_strdup(collection.as.dict.items[n].key)));
+                        env_set(parser->env, var_name, make_string_owned(qs_strdup(collection.as.dict.entries[n].key)));
                     }
                 }
 
@@ -1119,8 +1119,8 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
                 return 0;
             }
             for (size_t i = 0; i < args->items[0].as.dict.count; i++) {
-                dict_set(&out->as.dict, args->items[0].as.dict.items[i].key,
-                         clone_value(args->items[0].as.dict.items[i].value));
+                dict_set(&out->as.dict, args->items[0].as.dict.entries[i].key,
+                         clone_value(args->items[0].as.dict.entries[i].value));
             }
             return 1;
         }
@@ -1339,7 +1339,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         free(key);
         Value result;
         if (idx >= 0) {
-            result = clone_value(out->as.dict.items[idx].value);
+            result = clone_value(out->as.dict.entries[idx].value);
         } else if (args->count == 2) {
             result = clone_value(args->items[1]);
         } else {
@@ -1361,7 +1361,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         }
         ValueList keys = {0};
         for (size_t i = 0; i < out->as.dict.count; i++) {
-            list_push(&keys, make_string_owned(qs_strdup(out->as.dict.items[i].key)));
+            list_push(&keys, make_string_owned(qs_strdup(out->as.dict.entries[i].key)));
         }
         free_value(*out);
         out->type = VALUE_LIST;
@@ -1380,7 +1380,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         }
         ValueList vals = {0};
         for (size_t i = 0; i < out->as.dict.count; i++) {
-            list_push(&vals, clone_value(out->as.dict.items[i].value));
+            list_push(&vals, clone_value(out->as.dict.entries[i].value));
         }
         free_value(*out);
         out->type = VALUE_LIST;
@@ -1400,8 +1400,8 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         ValueList pairs = {0};
         for (size_t i = 0; i < out->as.dict.count; i++) {
             ValueList pair = {0};
-            list_push(&pair, make_string_owned(qs_strdup(out->as.dict.items[i].key)));
-            list_push(&pair, clone_value(out->as.dict.items[i].value));
+            list_push(&pair, make_string_owned(qs_strdup(out->as.dict.entries[i].key)));
+            list_push(&pair, clone_value(out->as.dict.entries[i].value));
             Value pair_val;
             pair_val.type = VALUE_LIST;
             pair_val.as.list = pair;
@@ -1426,12 +1426,7 @@ static int apply_method(Parser *parser, Value *out, const char *method, ValueLis
         int idx = dict_find(&out->as.dict, key);
         free(key);
         if (idx >= 0) {
-            free(out->as.dict.items[idx].key);
-            free_value(out->as.dict.items[idx].value);
-            for (size_t i = (size_t)idx; i < out->as.dict.count - 1; i++) {
-                out->as.dict.items[i] = out->as.dict.items[i + 1];
-            }
-            out->as.dict.count--;
+            dict_remove_at(&out->as.dict, (size_t)idx);
         }
         return 1;
     }
@@ -1813,8 +1808,8 @@ object_method:
 
         if (args->count == 0) {
             for (size_t i = 0; i < out->as.object.data->fields.count; i++) {
-                if (strcmp(out->as.object.data->fields.items[i].key, method) == 0) {
-                    Value field_val = clone_value(out->as.object.data->fields.items[i].value);
+                if (strcmp(out->as.object.data->fields.entries[i].key, method) == 0) {
+                    Value field_val = clone_value(out->as.object.data->fields.entries[i].value);
                     free_value(*out);
                     *out = field_val;
                     return 1;
@@ -2062,7 +2057,7 @@ parsed_index_start:
                 free_value(key_value);
                 return 0;
             }
-            Value selected = clone_value(out->as.dict.items[found].value);
+            Value selected = clone_value(out->as.dict.entries[found].value);
             free_value(*out);
             free_value(key_value);
             *out = selected;
@@ -2586,7 +2581,7 @@ static char *json_stringify_value(Value value) {
         case VALUE_FLOAT: { char buf[64]; snprintf(buf,sizeof(buf),"%g",value.as.floating); return qs_strdup(buf); }
         case VALUE_STRING: { size_t cap=strlen(value.as.string)*2+3; char *r=malloc(cap); r[0]='"'; r[1]='\0'; for (const char *p=value.as.string;*p;p++) { size_t l=strlen(r); if (*p=='"'||*p=='\\') { r=realloc(r,cap+2); r[l]='\\'; r[l+1]=*p; r[l+2]='\0'; } else { r=realloc(r,cap+1); r[l]=*p; r[l+1]='\0'; } } size_t l=strlen(r); r[l]='"'; r[l+1]='\0'; return r; }
         case VALUE_LIST: { size_t cap=64; char *r=malloc(cap); r[0]='['; r[1]='\0'; for (size_t i=0;i<value.as.list.count;i++) { if(i>0)strcat(r,","); char *e=json_stringify_value(value.as.list.items[i]); size_t l=strlen(r); r=realloc(r,l+strlen(e)+2); strcat(r,e); free(e); } size_t l=strlen(r); r=realloc(r,l+2); r[l]=']'; r[l+1]='\0'; return r; }
-        case VALUE_DICT: { size_t cap=64; char *r=malloc(cap); r[0]='{'; r[1]='\0'; for (size_t i=0;i<value.as.dict.count;i++) { if(i>0)strcat(r,","); char *k=json_stringify_value(make_string_owned(qs_strdup(value.as.dict.items[i].key))); char *v=json_stringify_value(value.as.dict.items[i].value); size_t l=strlen(r); r=realloc(r,l+strlen(k)+1+strlen(v)+2); strcat(r,k); strcat(r,":"); strcat(r,v); free(k); free(v); } size_t l=strlen(r); r=realloc(r,l+2); r[l]='}'; r[l+1]='\0'; return r; }
+        case VALUE_DICT: { size_t cap=64; char *r=malloc(cap); r[0]='{'; r[1]='\0'; for (size_t i=0;i<value.as.dict.count;i++) { if(i>0)strcat(r,","); char *k=json_stringify_value(make_string_owned(qs_strdup(value.as.dict.entries[i].key))); char *v=json_stringify_value(value.as.dict.entries[i].value); size_t l=strlen(r); r=realloc(r,l+strlen(k)+1+strlen(v)+2); strcat(r,k); strcat(r,":"); strcat(r,v); free(k); free(v); } size_t l=strlen(r); r=realloc(r,l+2); r[l]='}'; r[l+1]='\0'; return r; }
         default: return qs_strdup("null");
     }
 }

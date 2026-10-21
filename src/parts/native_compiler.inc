@@ -1340,9 +1340,9 @@ static int cg_value_small(Value v) {
     if (v.type == VALUE_DICT) {
         if (v.as.dict.count > CG_MAX_FOLD_ELEMS) return 0;
         for (size_t i = 0; i < v.as.dict.count; i++) {
-            if (v.as.dict.items[i].key &&
-                strlen(v.as.dict.items[i].key) > CG_MAX_FOLD_STR) return 0;
-            if (!cg_value_small(v.as.dict.items[i].value)) return 0;
+            if (v.as.dict.entries[i].key &&
+                strlen(v.as.dict.entries[i].key) > CG_MAX_FOLD_STR) return 0;
+            if (!cg_value_small(v.as.dict.entries[i].value)) return 0;
         }
         return 1;
     }
@@ -1359,7 +1359,7 @@ static int cg_value_finite(Value v) {
         }
     } else if (v.type == VALUE_DICT) {
         for (size_t i = 0; i < v.as.dict.count; i++) {
-            if (!cg_value_finite(v.as.dict.items[i].value)) return 0;
+            if (!cg_value_finite(v.as.dict.entries[i].value)) return 0;
         }
     }
     return 1;
@@ -1412,9 +1412,9 @@ static void cg_emit_value_literal(char *t, Value v) {
         case VALUE_DICT:
             cg_emit("    Value %s = make_dict_empty();\n", t);
             for (size_t i = 0; i < v.as.dict.count; i++) {
-                char *val = cg_const_value_temp(v.as.dict.items[i].value);
+                char *val = cg_const_value_temp(v.as.dict.entries[i].value);
                 cg_emit("    dict_set(&%s.as.dict, ", t);
-                write_c_string(cg_out, v.as.dict.items[i].key);
+                write_c_string(cg_out, v.as.dict.entries[i].key);
                 cg_emit(", %s);\n", val);
                 free(val);
             }

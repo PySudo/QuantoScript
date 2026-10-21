@@ -995,7 +995,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         } else if (value.type == VALUE_DICT) {
             Value lv = make_list_empty();
             for (size_t k = 0; k < value.as.dict.count; k++)
-                list_push(&lv.as.list, make_string_owned(qs_strdup(value.as.dict.items[k].key)));
+                list_push(&lv.as.list, make_string_owned(qs_strdup(value.as.dict.entries[k].key)));
             *out = lv;
             return 1;
         }
@@ -1034,8 +1034,8 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         } else if (value.type == VALUE_DICT) {
             for (size_t k = 0; k < value.as.dict.count; k++) {
                 Value pair = make_list_empty();
-                list_push(&pair.as.list, make_string_owned(qs_strdup(value.as.dict.items[k].key)));
-                list_push(&pair.as.list, clone_value(value.as.dict.items[k].value));
+                list_push(&pair.as.list, make_string_owned(qs_strdup(value.as.dict.entries[k].key)));
+                list_push(&pair.as.list, clone_value(value.as.dict.entries[k].value));
                 list_push(&pairs.as.list, pair);
             }
         }

@@ -15,8 +15,8 @@ static void print_value(Value value) {
             if (i) {
                 printf(", ");
             }
-            printf("'%s': ", value.as.dict.items[i].key);
-            print_list_value(value.as.dict.items[i].value);
+            printf("'%s': ", value.as.dict.entries[i].key);
+            print_list_value(value.as.dict.entries[i].value);
         }
         printf("}");
     } else if (value.type == VALUE_LAMBDA) {

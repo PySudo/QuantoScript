@@ -236,7 +236,7 @@ static int vm_execute(VM *vm) {
                 } else if (obj.type == VALUE_DICT) {
                     char *key = value_to_string(idx);
                     int di = dict_find(&obj.as.dict, key);
-                    if (di >= 0) vm_push(vm, clone_value(obj.as.dict.items[di].value));
+                    if (di >= 0) vm_push(vm, clone_value(obj.as.dict.entries[di].value));
                     else vm_push(vm, make_null());
                     free(key);
                 }
@@ -257,8 +257,8 @@ static int vm_execute(VM *vm) {
                 if (obj.type == VALUE_OBJECT) {
                     if (argc == 0) {
                         for (size_t fi = 0; fi < obj.as.object.data->fields.count; fi++) {
-                            if (strcmp(obj.as.object.data->fields.items[fi].key, method) == 0) {
-                                result = clone_value(obj.as.object.data->fields.items[fi].value);
+                            if (strcmp(obj.as.object.data->fields.entries[fi].key, method) == 0) {
+                                result = clone_value(obj.as.object.data->fields.entries[fi].value);
                                 goto method_done;
                             }
                         }
@@ -815,8 +815,8 @@ static int vm_execute(VM *vm) {
 
                 if (obj.type == VALUE_OBJECT) {
                     for (size_t i = 0; i < obj.as.object.data->fields.count; i++) {
-                        if (strcmp(obj.as.object.data->fields.items[i].key, field) == 0) {
-                            result = clone_value(obj.as.object.data->fields.items[i].value);
+                        if (strcmp(obj.as.object.data->fields.entries[i].key, field) == 0) {
+                            result = clone_value(obj.as.object.data->fields.entries[i].value);
                             break;
                         }
                     }
@@ -846,26 +846,7 @@ static int vm_execute(VM *vm) {
 
                 if (obj.type == VALUE_OBJECT) {
                     ObjectData *data = obj.as.object.data;
-
-                    int found = 0;
-                    for (size_t i = 0; i < data->fields.count; i++) {
-                        if (strcmp(data->fields.items[i].key, field) == 0) {
-                            free_value(data->fields.items[i].value);
-                            data->fields.items[i].value = value;
-                            found = 1;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        if (data->fields.count >= data->fields.capacity) {
-                            size_t new_cap = data->fields.capacity ? data->fields.capacity * 2 : 8;
-                            data->fields.items = realloc(data->fields.items, new_cap * sizeof(DictEntry));
-                            data->fields.capacity = new_cap;
-                        }
-                        data->fields.items[data->fields.count].key = qs_strdup(field);
-                        data->fields.items[data->fields.count].value = value;
-                        data->fields.count++;
-                    }
+                    dict_set(&data->fields, field, value);
                     vm_push(vm, obj);
                 } else {
                     free_value(value);

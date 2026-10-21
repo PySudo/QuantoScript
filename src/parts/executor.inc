@@ -46,30 +46,7 @@ static int execute_assignment(Environment *env, const char *line_text, size_t as
                 return 0;
             }
 
-            int found = 0;
-            for (size_t i = 0; i < obj.as.object.data->fields.count; i++) {
-                if (strcmp(obj.as.object.data->fields.items[i].key, field_name) == 0) {
-                    free_value(obj.as.object.data->fields.items[i].value);
-                    obj.as.object.data->fields.items[i].value = value;
-                    found = 1;
-                    break;
-                }
-            }
-            if (!found) {
-                if (obj.as.object.data->fields.count == obj.as.object.data->fields.capacity) {
-                    size_t next_cap = obj.as.object.data->fields.capacity ? obj.as.object.data->fields.capacity * 2 : 8;
-                    DictEntry *next = realloc(obj.as.object.data->fields.items, next_cap * sizeof(DictEntry));
-                    if (!next) {
-                        fprintf(stderr, "out of memory\n");
-                        exit(2);
-                    }
-                    obj.as.object.data->fields.items = next;
-                    obj.as.object.data->fields.capacity = next_cap;
-                }
-                obj.as.object.data->fields.items[obj.as.object.data->fields.count].key = qs_strdup(field_name);
-                obj.as.object.data->fields.items[obj.as.object.data->fields.count].value = value;
-                obj.as.object.data->fields.count++;
-            }
+            dict_set(&obj.as.object.data->fields, field_name, value);
 
             free(obj_name);
             free(name);
@@ -493,10 +470,10 @@ static int execute_loop(Program *program, Environment *env, size_t *index, size_
             } else if (iterable.type == VALUE_DICT) {
                 for (size_t n = 0; n < iterable.as.dict.count; n++) {
                     if (index_name) {
-                        env_set(env, index_name, make_string_owned(qs_strdup(iterable.as.dict.items[n].key)));
-                        env_set(env, item_name, clone_value(iterable.as.dict.items[n].value));
+                        env_set(env, index_name, make_string_owned(qs_strdup(iterable.as.dict.entries[n].key)));
+                        env_set(env, item_name, clone_value(iterable.as.dict.entries[n].value));
                     } else {
-                        env_set(env, item_name, make_string_owned(qs_strdup(iterable.as.dict.items[n].key)));
+                        env_set(env, item_name, make_string_owned(qs_strdup(iterable.as.dict.entries[n].key)));
                     }
                     g_loop_depth++;
                     if (!execute_range(program, env, loop_body_start, loop_body_end, err)) {

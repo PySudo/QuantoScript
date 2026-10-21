@@ -760,7 +760,7 @@ static int compiler_emit_direct_print(FILE *out, char **args, size_t count, Comp
                 write_c_string(out, status_name);
                 fprintf(out, ");\n");
                 fprintf(out, "    if (!qs_slot || qs_slot->value.type != VALUE_DICT) { set_error(&err, %d, 1, \"status needs a map response\"); goto qs_error; }\n", line_number);
-                fprintf(out, "    { int qs_status_index = dict_find(&qs_slot->value.as.dict, \"status\"); if (qs_status_index < 0 || qs_slot->value.as.dict.items[qs_status_index].value.type != VALUE_INTEGER) { set_error(&err, %d, 1, \"response has no integer status\"); goto qs_error; } printf(\"%%ld\", qs_slot->value.as.dict.items[qs_status_index].value.as.integer); }\n", line_number);
+                fprintf(out, "    { int qs_status_index = dict_find(&qs_slot->value.as.dict, \"status\"); if (qs_status_index < 0 || qs_slot->value.as.dict.entries[qs_status_index].value.type != VALUE_INTEGER) { set_error(&err, %d, 1, \"response has no integer status\"); goto qs_error; } printf(\"%%ld\", qs_slot->value.as.dict.entries[qs_status_index].value.as.integer); }\n", line_number);
                 free(status_name);
             } else {
                 compiler_emit_expr(out, args[i], line_number, "qs_tmp");

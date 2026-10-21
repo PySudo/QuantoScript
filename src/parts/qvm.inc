@@ -110,8 +110,8 @@ static void qvm_write_value(FILE *f, Value v) {
             qw_u8(f, 0x07);
             qw_u32(f, (uint32_t)v.as.dict.count);
             for (size_t i = 0; i < v.as.dict.count; i++) {
-                qvm_write_str(f, v.as.dict.items[i].key);
-                qvm_write_value(f, v.as.dict.items[i].value);
+                qvm_write_str(f, v.as.dict.entries[i].key);
+                qvm_write_value(f, v.as.dict.entries[i].value);
             }
             break;
         }

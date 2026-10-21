@@ -26,9 +26,11 @@ typedef struct {
 } ValueList;
 
 typedef struct {
-    DictEntry *items;
-    size_t count;
+    DictEntry *entries;
     size_t capacity;
+    size_t count;
+    size_t index_capacity;
+    int *index_buckets;
 } ValueDict;
 
 typedef struct ObjectData ObjectData;
@@ -67,6 +69,7 @@ struct Value {
 struct DictEntry {
     char *key;
     Value value;
+    unsigned long long hash;
 };
 
 typedef struct {

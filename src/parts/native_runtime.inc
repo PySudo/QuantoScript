@@ -456,7 +456,7 @@ static QS_UNUSED_FN Value qs_dict_get(const Value *dict, Value key_value) {
     int index = dict_find(&dict->as.dict, key);
     if (owned) free(key);
     free_value(key_value);
-    return index >= 0 ? clone_value(dict->as.dict.items[index].value) : make_null();
+    return index >= 0 ? clone_value(dict->as.dict.entries[index].value) : make_null();
 }
 
 static QS_UNUSED_FN Value qs_dict_get_or(const Value *dict, Value key_value, Value fallback) {
@@ -465,7 +465,7 @@ static QS_UNUSED_FN Value qs_dict_get_or(const Value *dict, Value key_value, Val
     int index = dict_find(&dict->as.dict, key);
     if (owned) free(key);
     free_value(key_value);
-    Value result = clone_value(index >= 0 ? dict->as.dict.items[index].value : fallback);
+    Value result = clone_value(index >= 0 ? dict->as.dict.entries[index].value : fallback);
     free_value(fallback);
     return result;
 }
@@ -473,7 +473,7 @@ static QS_UNUSED_FN Value qs_dict_get_or(const Value *dict, Value key_value, Val
 static QS_UNUSED_FN Value qs_dict_keys(const Value *dict) {
     ValueList keys = {0};
     for (size_t i = 0; i < dict->as.dict.count; i++) {
-        list_push(&keys, make_string_owned(qs_strdup(dict->as.dict.items[i].key)));
+        list_push(&keys, make_string_owned(qs_strdup(dict->as.dict.entries[i].key)));
     }
     Value result;
     result.type = VALUE_LIST;
@@ -484,7 +484,7 @@ static QS_UNUSED_FN Value qs_dict_keys(const Value *dict) {
 static QS_UNUSED_FN Value qs_dict_values(const Value *dict) {
     ValueList vals = {0};
     for (size_t i = 0; i < dict->as.dict.count; i++) {
-        list_push(&vals, clone_value(dict->as.dict.items[i].value));
+        list_push(&vals, clone_value(dict->as.dict.entries[i].value));
     }
     Value result;
     result.type = VALUE_LIST;
@@ -496,8 +496,8 @@ static QS_UNUSED_FN Value qs_dict_items(const Value *dict) {
     ValueList pairs = {0};
     for (size_t i = 0; i < dict->as.dict.count; i++) {
         ValueList pair = {0};
-        list_push(&pair, make_string_owned(qs_strdup(dict->as.dict.items[i].key)));
-        list_push(&pair, clone_value(dict->as.dict.items[i].value));
+        list_push(&pair, make_string_owned(qs_strdup(dict->as.dict.entries[i].key)));
+        list_push(&pair, clone_value(dict->as.dict.entries[i].value));
         Value entry;
         entry.type = VALUE_LIST;
         entry.as.list = pair;
@@ -789,7 +789,7 @@ static QS_UNUSED_FN Value qs_index_ref(const Value *obj, Value idx) {
             qs_raise("dict key not found");
             return make_null();
         }
-        Value result = clone_value(obj->as.dict.items[di].value);
+        Value result = clone_value(obj->as.dict.entries[di].value);
         free(key);
         free_value(idx);
         return result;
@@ -879,8 +879,8 @@ static QS_UNUSED_FN Value qs_get_field(Environment *env, Value obj, const char *
     if (obj.type == VALUE_OBJECT) {
         ObjectData *data = obj.as.object.data;
         for (size_t i = 0; i < data->fields.count; i++) {
-            if (strcmp(data->fields.items[i].key, field) == 0) {
-                result = clone_value(data->fields.items[i].value);
+            if (strcmp(data->fields.entries[i].key, field) == 0) {
+                result = clone_value(data->fields.entries[i].value);
                 break;
             }
         }
@@ -906,25 +906,7 @@ static QS_UNUSED_FN Value qs_get_field(Environment *env, Value obj, const char *
 static QS_UNUSED_FN Value qs_set_field(Value obj, const char *field, Value value) {
     if (obj.type == VALUE_OBJECT) {
         ObjectData *data = obj.as.object.data;
-        int found = 0;
-        for (size_t i = 0; i < data->fields.count; i++) {
-            if (strcmp(data->fields.items[i].key, field) == 0) {
-                free_value(data->fields.items[i].value);
-                data->fields.items[i].value = value;
-                found = 1;
-                break;
-            }
-        }
-        if (!found) {
-            if (data->fields.count >= data->fields.capacity) {
-                size_t new_cap = data->fields.capacity ? data->fields.capacity * 2 : 8;
-                data->fields.items = realloc(data->fields.items, new_cap * sizeof(DictEntry));
-                data->fields.capacity = new_cap;
-            }
-            data->fields.items[data->fields.count].key = qs_strdup(field);
-            data->fields.items[data->fields.count].value = value;
-            data->fields.count++;
-        }
+        dict_set(&data->fields, field, value);
     } else {
         free_value(value);
         char msg[256];
@@ -1105,8 +1087,8 @@ static QS_UNUSED_FN Value qs_method_call(Environment *env, Value obj, const char
         ObjectData *data = obj.as.object.data;
         if (argc == 0) {
             for (size_t i = 0; i < data->fields.count; i++) {
-                if (strcmp(data->fields.items[i].key, method) == 0) {
-                    Value result = clone_value(data->fields.items[i].value);
+                if (strcmp(data->fields.entries[i].key, method) == 0) {
+                    Value result = clone_value(data->fields.entries[i].value);
                     free_value(obj);
                     return result;
                 }

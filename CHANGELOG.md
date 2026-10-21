@@ -5,6 +5,7 @@ All notable changes to QuantoScript will be documented in this file.
 ## [Unreleased]
 
 ### Features
+- Maps now use a hash index for key lookup instead of a linear scan, in every engine (interpreter, `qs vm`, `qs build`, and native `qs native`). `has`, `get`, `get(key, default)`, `keys`, `items`, and `remove` keep insertion order for iteration, but `has`/`get`/`remove` are constant-time on average. Existing programs and outputs are unchanged.
 - `qs native` now recognizes the common built-in map and string methods (`has`, `get`, `keys`, `values`, `items`, `split`, `join`, `contains`, `indexOf`, `substring`, `startsWith`, `endsWith`, `trimStart`, `trimEnd`, `title`, `replace`, `repeat`, `reverse`) and emits direct calls to specialized C helpers instead of the generic `qs_method_call` dispatcher. Each call keeps a runtime type guard and falls back to the generic path when the receiver is not the expected type, so behaviour is unchanged. `len(...)` is also inlined for strings, lists, and maps.
 
 ### Bug Fixes
@@ -16,6 +17,7 @@ All notable changes to QuantoScript will be documented in this file.
 - Native method calls, indexing, slicing, and membership tests on plain variables now borrow the stored value instead of deep-cloning it on every access. `data.get(...)`, `base.split(...)`, `xs[0]`, `xs[1..2]`, and `x in xs` read in place, so map- and string-heavy loops no longer copy the receiver each iteration.
 - Aggregate variables are no longer constant-folded into a freshly rebuilt literal at every use; only scalar constants are folded. Loops that read a map or list assigned once no longer rebuild that literal on each access.
 - Native map benchmark: 2.76 s -> 79 ms (median of alternating runs; 20 000 `get`/`has` calls on a 100-key map). String-method benchmark stays around 60 ms. All benchmark, example, and regression outputs are unchanged.
+- Map key lookup is now constant-time on average. A 100 000-lookup loop over a 2 000-key map drops from ~1.35 s to ~0.13 s in native code (~10x), and the same speedup applies to the interpreter and both bytecode engines.
 
 ## [2.1.0] - 2026-10-20
 
