@@ -794,6 +794,24 @@ static void astc_compile_stmt(ASTNode *node, BytecodeProgram *prog) {
             break;
         }
 
+        case AST_INDEX_ASSIGN: {
+            int slot = locals_find(node->as.index_assign.name);
+            if (slot >= 0) {
+                emit(prog, OP_LOAD_LOCAL, make_null(), slot, node->line);
+            } else {
+                emit(prog, OP_LOAD_VAR, make_string_owned(qs_strdup(node->as.index_assign.name)), 0, node->line);
+            }
+            astc_compile_expr(node->as.index_assign.key, prog);
+            astc_compile_expr(node->as.index_assign.value, prog);
+            emit(prog, OP_STORE_INDEX, make_string_owned(qs_strdup(node->as.index_assign.name)), 0, node->line);
+            if (slot >= 0) {
+                emit(prog, OP_STORE_LOCAL, make_null(), slot, node->line);
+            } else {
+                emit(prog, OP_STORE_VAR, make_string_owned(qs_strdup(node->as.index_assign.name)), 0, node->line);
+            }
+            break;
+        }
+
         case AST_TRY: {
             int try_push_idx = prog->count;
             emit(prog, OP_TRY_PUSH, make_null(), 0, node->line);

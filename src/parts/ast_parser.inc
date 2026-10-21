@@ -1520,7 +1520,37 @@ static ASTNode *ast_parse_statement(Program *source, size_t i, size_t end, size_
         size_t saved_pos = pos;
         size_t nstart = pos;
         while (pos < len && (isalnum(line[pos]) || line[pos] == '_' || line[pos] == '.')) pos++;
-        if (pos > nstart && pos < len) {
+        int name_has_dot = 0;
+        for (size_t dq = nstart; dq < pos; dq++) {
+            if (line[dq] == '.') { name_has_dot = 1; break; }
+        }
+        if (pos > nstart && pos < len && line[pos] == '[' && !name_has_dot) {
+            size_t bstart = pos + 1;
+            ASTParser kp = {line, bstart, (int)i + 1};
+            ASTNode *key = ast_parse_expression(&kp);
+            ast_skip(&kp);
+            if (key && kp.pos < len && line[kp.pos] == ']') {
+                size_t opos = kp.pos + 1;
+                while (opos < len && (line[opos] == ' ' || line[opos] == '\t')) opos++;
+                if (opos < len && line[opos] == '=' && (opos + 1 >= len || line[opos + 1] != '=')) {
+                    char *obj_name = qs_strndup(line + nstart, pos - nstart);
+                    ASTNode *obj = ast_ident(obj_name, (int)i + 1);
+                    ASTParser vp = {line, opos + 1, (int)i + 1};
+                    ASTNode *val = ast_parse_expression(&vp);
+                    ASTNode *node = ast_new(AST_INDEX_ASSIGN, (int)i + 1);
+                    node->as.index_assign.object = obj;
+                    node->as.index_assign.key = key;
+                    node->as.index_assign.value = val;
+                    node->as.index_assign.name = qs_strdup(obj_name);
+                    *end_index = i;
+                    return node;
+                }
+                ast_free(key);
+            } else {
+                if (key) ast_free(key);
+            }
+            pos = saved_pos;
+        } else if (pos > nstart && pos < len) {
             size_t opos = pos;
             while (opos < len && (line[opos] == ' ' || line[opos] == '\t')) opos++;
             char aop = '\0';

@@ -331,6 +331,11 @@ static void cg_walk_node(ASTNode *n, CgWalk *w) {
             cg_walk_node(n->as.field_assign.object, w);
             cg_walk_node(n->as.field_assign.value, w);
             break;
+        case AST_INDEX_ASSIGN:
+            cg_walk_node(n->as.index_assign.key, w);
+            cg_walk_node(n->as.index_assign.value, w);
+            if (w->read) w->read(w->ctx, n->as.index_assign.name);
+            break;
         default:
             w->unsupported = 1;
             break;
@@ -2334,6 +2339,14 @@ static void cg_stmt(ASTNode *node) {
             cg_emit(", %s); free_value(%s);\n", val, t);
             break;
         }
+        case AST_INDEX_ASSIGN: {
+            char *key = cg_expr(node->as.index_assign.key);
+            char *val = cg_expr(node->as.index_assign.value);
+            cg_emit("    qs_index_assign(env, &local, ");
+            write_c_string(cg_out, node->as.index_assign.name);
+            cg_emit(", %s, %s);\n", key, val);
+            break;
+        }
         case AST_TRY:
             cg_try(node);
             break;
@@ -2386,17 +2399,17 @@ static void cg_emit_func(CgFunc *f) {
         }
     }
     if (f->is_method) {
-        cg_emit("    if (argc > 0) env_set(&local, \"self\", args[0]);\n");
+        cg_emit("    if (argc > 0) env_set(&local, \"self\", clone_value(args[0]));\n");
         for (int i = 0; i < f->param_count; i++) {
             cg_emit("    if (argc > %d) env_set(&local, ", i + 1);
             write_c_string(cg_out, f->params[i]);
-            cg_emit(", args[%d]);\n", i + 1);
+            cg_emit(", clone_value(args[%d]));\n", i + 1);
         }
     } else {
         for (int i = 0; i < f->param_count; i++) {
             cg_emit("    if (argc > %d) env_set(&local, ", i);
             write_c_string(cg_out, f->params[i]);
-            cg_emit(", args[%d]);\n", i);
+            cg_emit(", clone_value(args[%d]));\n", i);
         }
     }
     int saved_loop_top = cg_loop_top;

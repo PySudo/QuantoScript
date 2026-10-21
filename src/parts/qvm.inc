@@ -536,7 +536,7 @@ static int qvm_load(const char *path, QVMFile *qvm) {
                     qvm_free(qvm); fclose(f); return 0;
                 }
                 break;
-            case OP_LOAD_VAR: case OP_STORE_VAR:
+            case OP_LOAD_VAR: case OP_STORE_VAR: case OP_STORE_INDEX:
                 if (ins->arg.type != VALUE_STRING || !ins->arg.as.string) {
                     fprintf(stderr, "qvm: LOAD_VAR/STORE_VAR missing variable name at instruction %u\n", i);
                     qvm_free(qvm); fclose(f); return 0;
@@ -830,7 +830,7 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
                 else if (ins->arg.type != VALUE_NULL)
                     fprintf(stderr, " = %s", qvm_value_repr(ins->arg));
                 break;
-            case OP_LOAD_VAR: case OP_STORE_VAR:
+            case OP_LOAD_VAR: case OP_STORE_VAR: case OP_STORE_INDEX:
                 if (ins->arg.type == VALUE_STRING && ins->arg.as.string)
                     fprintf(stderr, "  '%s'", ins->arg.as.string);
                 else
@@ -929,7 +929,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
                 if (ins->arg.type != VALUE_NULL)
                     fprintf(stderr, " = %s", qvm_value_repr(ins->arg));
                 break;
-            case OP_LOAD_VAR: case OP_STORE_VAR:
+            case OP_LOAD_VAR: case OP_STORE_VAR: case OP_STORE_INDEX:
                 if (ins->arg.type == VALUE_STRING && ins->arg.as.string)
                     fprintf(stderr, "  '%s'", ins->arg.as.string);
                 else
@@ -1045,7 +1045,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
                     if (ins->arg.type != VALUE_NULL)
                         fprintf(stderr, " = %s", qvm_value_repr(ins->arg));
                     break;
-                case OP_LOAD_VAR: case OP_STORE_VAR:
+                case OP_LOAD_VAR: case OP_STORE_VAR: case OP_STORE_INDEX:
                     if (ins->arg.type == VALUE_STRING && ins->arg.as.string)
                         fprintf(stderr, "  '%s'", ins->arg.as.string);
                     else

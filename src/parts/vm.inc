@@ -244,7 +244,27 @@ static int vm_execute(VM *vm) {
                 free_value(idx);
                 break;
             }
-            case OP_STORE_INDEX: { Value val = vm_pop(vm), idx = vm_pop(vm), obj = vm_pop(vm); if (obj.type == VALUE_LIST) { long i; normalize_index(idx.as.integer, obj.as.list.count, &i); free_value(obj.as.list.items[i]); obj.as.list.items[i] = val; } vm_push(vm, obj); free_value(idx); break; }
+            case OP_STORE_INDEX: {
+                Value val = vm_pop(vm);
+                Value idx = vm_pop(vm);
+                Value obj = vm_pop(vm);
+                if (obj.type == VALUE_DICT) {
+                    char *key = value_to_string(idx);
+                    dict_set(&obj.as.dict, key, val);
+                    free(key);
+                    vm_push(vm, obj);
+                } else {
+                    free_value(obj);
+                    char msg[256];
+                    const char *nm = instr->arg.as.string ? instr->arg.as.string : "value";
+                    snprintf(msg, sizeof(msg), "'%s' is not a map", nm);
+                    free_value(idx); free_value(val);
+                    if (vm_raise(vm, msg)) { continue; }
+                    return 1;
+                }
+                free_value(idx);
+                break;
+            }
             case OP_CALL_METHOD: {
                 int argc = instr->arg_i;
                 const char *method = instr->arg.as.string;

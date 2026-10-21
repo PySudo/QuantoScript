@@ -14,6 +14,7 @@ typedef enum {
     AST_CHAINED_CMP,
 
     AST_INDEX,
+    AST_INDEX_ASSIGN,
     AST_SLICE,
 
     AST_CALL,
@@ -73,6 +74,8 @@ struct ASTNode {
         struct { ASTNode *object; char *method; ASTNode **args; int argc; } method_call;
 
         struct { ASTNode *object; ASTNode *key; } index;
+
+        struct { ASTNode *object; ASTNode *key; ASTNode *value; char *name; } index_assign;
 
         struct { ASTNode *object; ASTNode *start; ASTNode *end; } slice;
 
@@ -289,6 +292,12 @@ static void ast_free(ASTNode *n) {
         case AST_INDEX:
             ast_free(n->as.index.object);
             ast_free(n->as.index.key);
+            break;
+        case AST_INDEX_ASSIGN:
+            ast_free(n->as.index_assign.object);
+            ast_free(n->as.index_assign.key);
+            ast_free(n->as.index_assign.value);
+            free(n->as.index_assign.name);
             break;
         case AST_SLICE:
             ast_free(n->as.slice.object);

@@ -917,6 +917,29 @@ static QS_UNUSED_FN Value qs_set_field(Value obj, const char *field, Value value
     return obj;
 }
 
+static QS_UNUSED_FN void qs_index_assign(Environment *env, Environment *local, const char *name, Value key, Value value) {
+    Value *slot = qs_get_ptr(env, local, name);
+    if (!slot) {
+        free_value(key);
+        free_value(value);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "unknown variable '%s'", name);
+        qs_raise(msg);
+        return;
+    }
+    if (slot->type == VALUE_DICT) {
+        char *k = value_to_string(key);
+        dict_set(&slot->as.dict, k, value);
+        free(k);
+    } else {
+        free_value(value);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "'%s' is not a map", name);
+        qs_raise(msg);
+    }
+    free_value(key);
+}
+
 static QS_UNUSED_FN Value qs_call_named(Environment *env, const char *name, Value *args,
                                         const char **arg_names, int argc) {
     int var_idx = find_variable(env, name);

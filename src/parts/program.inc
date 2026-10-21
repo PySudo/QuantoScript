@@ -15,6 +15,7 @@ static void program_push(Program *program, char *line) {
 static void split_text_to_program(const char *text, Program *prog) {
     enum { SCAN, STR_DQ, STR_SQ } state = SCAN;
     int bd = 0;
+    int sub = 0;
     size_t ls = 0;
     size_t blen = strlen(text);
 
@@ -49,9 +50,11 @@ static void split_text_to_program(const char *text, Program *prog) {
         if (ch == '\'') { state = STR_SQ; continue; }
         if (ch == '{')  { bd++; continue; }
         if (ch == '}')  { if (bd > 0) bd--; continue; }
+        if (ch == '[')  { sub++; continue; }
+        if (ch == ']')  { if (sub > 0) sub--; continue; }
         if (ch == '\0') { EMIT(bi); break; }
 
-        if (bd > 0 || !is_name_start(ch)) continue;
+        if (bd > 0 || sub > 0 || !is_name_start(ch)) continue;
 
         if (bi > 0 && (is_name_part(text[bi - 1]) || text[bi - 1] == '.')) continue;
 
