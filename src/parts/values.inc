@@ -441,7 +441,7 @@ static void list_push(ValueList *list, Value value) {
     list->items[list->count++] = value;
 }
 
-static int dict_find(ValueDict *dict, const char *key) {
+static int dict_find(const ValueDict *dict, const char *key) {
     for (size_t i = 0; i < dict->count; i++) {
         if (strcmp(dict->items[i].key, key) == 0) {
             return (int)i;

@@ -81,6 +81,15 @@ static Value *cg_const_get(const char *name) {
     return NULL;
 }
 
+static int cg_value_scalar(const Value *v) {
+    return v && (v->type == VALUE_INTEGER || v->type == VALUE_FLOAT ||
+                 v->type == VALUE_BOOL || v->type == VALUE_NULL);
+}
+
+static int cg_const_scalar(const char *name) {
+    return cg_value_scalar(cg_const_get(name));
+}
+
 #define CG_MAX_READS 8192
 static char *cg_reads[CG_MAX_READS];
 static int cg_read_count = 0;
@@ -823,6 +832,8 @@ static void cg_stmt(ASTNode *node);
 static void cg_block(ASTNode *block);
 static char *cg_expr(ASTNode *node);
 static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args, int argc);
+static int cg_ptr_ident(ASTNode *node);
+static char *cg_ident_ptr(ASTNode *node);
 static int cg_is_mutating_method(const char *m);
 
 static void cg_emit(const char *fmt, ...) {
@@ -993,6 +1004,17 @@ static char *cg_binary_op(ASTNode *node) {
             }
         }
     }
+    if (node->type == AST_BINARY_IN && cg_ptr_ident(node->as.binary.left)) {
+        ASTNode *cont = node->as.binary.left;
+        char *right = cg_expr(node->as.binary.right);
+        cg_const_clear_all();
+        char *p = cg_ident_ptr(cont);
+        char *t = cg_newtemp();
+        cg_emit("    Value %s = %s ? qs_in_ref(%s, %s) : qs_in(qs_get(env, &local, ", t, p, p, right);
+        write_c_string(cg_out, cont->as.string);
+        cg_emit("), %s);\n", right);
+        return t;
+    }
     char *left = cg_expr(node->as.binary.left);
     char *right = cg_expr(node->as.binary.right);
     char *t = cg_newtemp();
@@ -1130,10 +1152,19 @@ static char *cg_call_expr(ASTNode *node) {
 
     if (argc == 1 && strcmp(node->as.call.name, "len") == 0 &&
         cg_func_index("len") < 0 && !cg_is_class("len")) {
-        char *arg = cg_expr(node->as.call.args[0]);
-        cg_const_clear_all();
+        ASTNode *arg_node = node->as.call.args[0];
         char *t = cg_newtemp();
-        cg_emit("    Value %s = qs_len_value(%s);\n", t, arg);
+        if (cg_ptr_ident(arg_node)) {
+            char *p = cg_ident_ptr(arg_node);
+            cg_emit("    Value %s = %s ? qs_len_ref(%s) : qs_len_value(qs_get(env, &local, ", t, p, p);
+            write_c_string(cg_out, arg_node->as.string);
+            cg_emit("));\n");
+            cg_const_clear_all();
+        } else {
+            char *arg = cg_expr(arg_node);
+            cg_const_clear_all();
+            cg_emit("    Value %s = qs_len_value(%s);\n", t, arg);
+        }
         return t;
     }
 
@@ -1214,26 +1245,59 @@ static const CgFastMethod *cg_fast_method_find(const char *name, int argc) {
     return NULL;
 }
 
+static int cg_ptr_ident(ASTNode *node) {
+    return node && node->type == AST_IDENT && node->as.string && node->as.string[0] &&
+               !cg_is_promo(node->as.string) && !cg_const_scalar(node->as.string);
+}
+
+static char *cg_ident_ptr(ASTNode *node) {
+    cg_mark_read(node->as.string);
+    char *p = cg_newtemp();
+    cg_emit("    Value *%s = qs_get_ptr(env, &local, ", p);
+    write_c_string(cg_out, node->as.string);
+    cg_emit(");\n");
+    return p;
+}
+
 static char *cg_method_call(ASTNode *object, const char *method, ASTNode **args, int argc) {
-    char *obj = cg_expr(object);
+    const CgFastMethod *fast = cg_fast_method_find(method, argc);
+    int by_ptr = fast && cg_ptr_ident(object);
+    char *obj = by_ptr ? NULL : cg_expr(object);
     char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
     for (int i = 0; i < argc; i++) temps[i] = cg_expr(args[i]);
 
     cg_const_clear_all();
+    char *ptr = by_ptr ? cg_ident_ptr(object) : NULL;
     char *t = cg_newtemp();
-    const CgFastMethod *fast = cg_fast_method_find(method, argc);
     if (fast) {
-        cg_emit("    Value %s = (%s.type == %s", t, obj, fast->receiver);
-        if (strcmp(fast->helper, "qs_str_join") == 0) {
-            cg_emit(" && %s.type == VALUE_LIST", temps[0]);
+        if (by_ptr) {
+            cg_emit("    Value %s = (%s && %s->type == %s", t, ptr, ptr, fast->receiver);
+            if (strcmp(fast->helper, "qs_str_join") == 0) {
+                cg_emit(" && %s.type == VALUE_LIST", temps[0]);
+            }
+            cg_emit(") ? %s(%s", fast->helper, ptr);
+            for (int i = 0; i < argc; i++) cg_emit(", %s", temps[i]);
+            cg_emit(") : qs_method_call(env, qs_get(env, &local, ");
+            write_c_string(cg_out, object->as.string);
+            cg_emit("), ");
+            write_c_string(cg_out, method);
+            cg_emit(", ");
+            cg_emit_args_array(temps, argc);
+            cg_emit(", %d);\n", argc);
+        } else {
+            cg_emit("    Value %s;\n", t);
+            cg_emit("    if (%s.type == %s", obj, fast->receiver);
+            if (strcmp(fast->helper, "qs_str_join") == 0) {
+                cg_emit(" && %s.type == VALUE_LIST", temps[0]);
+            }
+            cg_emit(") { %s = %s(&%s", t, fast->helper, obj);
+            for (int i = 0; i < argc; i++) cg_emit(", %s", temps[i]);
+            cg_emit("); free_value(%s); } else { %s = qs_method_call(env, %s, ", obj, t, obj);
+            write_c_string(cg_out, method);
+            cg_emit(", ");
+            cg_emit_args_array(temps, argc);
+            cg_emit(", %d); }\n", argc);
         }
-        cg_emit(") ? %s(%s", fast->helper, obj);
-        for (int i = 0; i < argc; i++) cg_emit(", %s", temps[i]);
-        cg_emit(") : qs_method_call(env, %s, ", obj);
-        write_c_string(cg_out, method);
-        cg_emit(", ");
-        cg_emit_args_array(temps, argc);
-        cg_emit(", %d);\n", argc);
     } else {
         cg_emit("    Value %s = qs_method_call(env, %s, ", t, obj);
         write_c_string(cg_out, method);
@@ -1607,7 +1671,7 @@ static int cg_const_eval(ASTNode *node, Value *out) {
         }
         case AST_IDENT: {
             Value *cv = cg_const_get(node->as.string);
-            if (!cv) return 0;
+            if (!cg_value_scalar(cv)) return 0;
             *out = clone_value(*cv);
             return 1;
         }
@@ -1706,14 +1770,23 @@ static char *cg_expr(ASTNode *node) {
             return cg_chained(node);
 
         case AST_INDEX: {
-            char *obj = cg_expr(node->as.index.object);
+            ASTNode *onode = node->as.index.object;
+            int by_ptr = cg_ptr_ident(onode);
+            char *obj = by_ptr ? NULL : cg_expr(onode);
             char *key = cg_expr(node->as.index.key);
             char *t = cg_newtemp();
-            cg_emit("    Value %s = qs_index(%s, %s);\n", t, obj, key);
+            if (by_ptr) {
+                char *p = cg_ident_ptr(onode);
+                cg_emit("    Value %s = qs_index_ref(%s, %s);\n", t, p, key);
+            } else {
+                cg_emit("    Value %s = qs_index(%s, %s);\n", t, obj, key);
+            }
             return t;
         }
         case AST_SLICE: {
-            char *obj = cg_expr(node->as.slice.object);
+            ASTNode *onode = node->as.slice.object;
+            int by_ptr = cg_ptr_ident(onode);
+            char *obj = by_ptr ? NULL : cg_expr(onode);
             char *start = node->as.slice.start ? cg_expr(node->as.slice.start) : NULL;
             if (!start) {
                 start = cg_newtemp();
@@ -1722,7 +1795,12 @@ static char *cg_expr(ASTNode *node) {
             char *end = node->as.slice.end ? cg_expr(node->as.slice.end) : NULL;
             if (!end) end = cg_emit_null();
             char *t = cg_newtemp();
-            cg_emit("    Value %s = qs_slice(%s, %s, %s);\n", t, obj, start, end);
+            if (by_ptr) {
+                char *p = cg_ident_ptr(onode);
+                cg_emit("    Value %s = qs_slice_ref(%s, %s, %s);\n", t, p, start, end);
+            } else {
+                cg_emit("    Value %s = qs_slice(%s, %s, %s);\n", t, obj, start, end);
+            }
             return t;
         }
 
@@ -1989,14 +2067,19 @@ static void cg_assign(ASTNode *node) {
 
     if (cg_dse && op == '=' && !is_define_name(name) && !cg_is_read(name)) {
         Value cv;
-        if (cg_const_eval(node->as.assign.value, &cv)) {
+        int folded = cg_const_eval(node->as.assign.value, &cv);
+        if (folded && cg_value_scalar(&cv)) {
             cg_const_set(name, cv);
             return;
         }
-        char *side = cg_expr(node->as.assign.value);
-        cg_emit("    free_value(%s);\n", side);
-        cg_const_clear(name);
-        return;
+        if (folded) {
+            free_value(cv);
+        } else {
+            char *side = cg_expr(node->as.assign.value);
+            cg_emit("    free_value(%s);\n", side);
+            cg_const_clear(name);
+            return;
+        }
     }
 
     if (op == '+') {

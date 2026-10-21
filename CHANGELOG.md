@@ -13,6 +13,9 @@ All notable changes to QuantoScript will be documented in this file.
 ### Performance
 - New `map` and `strm` benchmarks in the benchmark suite.
 - Native string-method benchmark: 81 ms -> 74 ms. Native map benchmark: 2.75 s -> 2.52 s; map access is still dominated by value cloning on every `get`.
+- Native method calls, indexing, slicing, and membership tests on plain variables now borrow the stored value instead of deep-cloning it on every access. `data.get(...)`, `base.split(...)`, `xs[0]`, `xs[1..2]`, and `x in xs` read in place, so map- and string-heavy loops no longer copy the receiver each iteration.
+- Aggregate variables are no longer constant-folded into a freshly rebuilt literal at every use; only scalar constants are folded. Loops that read a map or list assigned once no longer rebuild that literal on each access.
+- Native map benchmark: 2.76 s -> 79 ms (median of alternating runs; 20 000 `get`/`has` calls on a 100-key map). String-method benchmark stays around 60 ms. All benchmark, example, and regression outputs are unchanged.
 
 ## [2.1.0] - 2026-10-20
 
