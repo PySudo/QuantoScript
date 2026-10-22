@@ -314,7 +314,8 @@ static void call_stack_push(const char *name, int line) {
         g_call_stack_capacity = next_capacity;
     }
     char buffer[512];
-    snprintf(buffer, sizeof(buffer), "%s() at line %d", name, line);
+    const char *fname = (g_program && g_program->path) ? g_program->path : "<unknown>";
+    snprintf(buffer, sizeof(buffer), "%s() at %s:%d", name, fname, line > 0 ? line : 1);
     g_call_stack[g_call_stack_count++] = qs_strdup(buffer);
 }
 

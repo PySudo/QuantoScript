@@ -660,7 +660,7 @@ static int cg_func_body_safe(ASTNode *n, int *func_int) {
         case AST_BINARY_EQ: case AST_BINARY_NEQ:
         case AST_BINARY_LT: case AST_BINARY_GT:
         case AST_BINARY_LTE: case AST_BINARY_GTE:
-        case AST_BINARY_AND: case AST_BINARY_OR:
+        case AST_BINARY_AND: case AST_BINARY_OR: case AST_BINARY_NULLCOAL:
             return cg_func_body_safe(n->as.binary.left, func_int) &&
                    cg_func_body_safe(n->as.binary.right, func_int);
         case AST_CALL: {
@@ -1524,6 +1524,14 @@ static int cg_const_eval(ASTNode *node, Value *out) {
             *out = make_bool(node->type == AST_BINARY_AND ? (lt && rt) : (lt || rt));
             return 1;
         }
+        case AST_BINARY_NULLCOAL: {
+            Value l, r;
+            if (!cg_const_eval(node->as.binary.left, &l)) return 0;
+            if (!cg_const_eval(node->as.binary.right, &r)) { free_value(l); return 0; }
+            if (l.type != VALUE_NULL) { free_value(r); *out = l; }
+            else { free_value(l); *out = r; }
+            return 1;
+        }
         case AST_BINARY_IN: {
             Value l, r;
             if (!cg_const_eval(node->as.binary.left, &l)) return 0;
@@ -1867,6 +1875,41 @@ static char *cg_expr(ASTNode *node) {
             cg_emit("    Value %s = qs_get_field(env, %s, ", t, obj);
             write_c_string(cg_out, node->as.field_access.field);
             cg_emit(");\n");
+            return t;
+        }
+
+        case AST_BINARY_NULLCOAL: {
+            char *left = cg_expr(node->as.binary.left);
+            char *right = cg_expr(node->as.binary.right);
+            char *t = cg_newtemp();
+            cg_emit("    Value %s = (%s.type != VALUE_NULL) ? %s : %s;\n", t, left, left, right);
+            return t;
+        }
+
+        case AST_OPTIONAL_CHAIN: {
+            char *obj = cg_expr(node->as.optional_chain.object);
+            char *t = cg_newtemp();
+            cg_emit("    Value %s = make_null();\n", t);
+            cg_emit("    if (%s.type != VALUE_NULL) {\n", obj);
+            if (node->as.optional_chain.kind == 1) {
+                char *key = node->as.optional_chain.key ? cg_expr(node->as.optional_chain.key) : cg_emit_null();
+                cg_emit("        %s = qs_opt_index(%s, %s);\n", t, obj, key);
+            } else if (node->as.optional_chain.argc < 0) {
+                cg_emit("        %s = qs_opt_field(env, %s, ", t, obj);
+                write_c_string(cg_out, node->as.optional_chain.name);
+                cg_emit(");\n");
+            } else {
+                int argc = node->as.optional_chain.argc < 0 ? 0 : node->as.optional_chain.argc;
+                char **temps = argc > 0 ? malloc((size_t)argc * sizeof(char *)) : NULL;
+                for (int i = 0; i < argc; i++) temps[i] = cg_expr(node->as.optional_chain.args[i]);
+                cg_emit("        %s = qs_method_call(env, %s, ", t, obj);
+                write_c_string(cg_out, node->as.optional_chain.name);
+                cg_emit(", ");
+                cg_emit_args_array(temps, argc);
+                cg_emit(", %d);\n", argc);
+                free(temps);
+            }
+            cg_emit("    }\n");
             return t;
         }
 
@@ -2483,9 +2526,9 @@ static int native_compile(const char *input_path, const char *output_path) {
     ASTNode *ast = ast_parse_program(&program);
     if (ast_parse_failed) {
         if (ast_parse_failed_msg[0] != '\0') {
-            fprintf(stderr, "SyntaxError: %s\n", ast_parse_failed_msg);
+            fprintf(stderr, "Error: %s\n", ast_parse_failed_msg);
         } else {
-            fprintf(stderr, "SyntaxError: expected a value\n");
+            fprintf(stderr, "Error: expected a value\n");
         }
         fprintf(stderr, "line %d, column 0\n", ast_parse_failed_line);
         ast_parse_failed = 0;
@@ -2497,7 +2540,7 @@ static int native_compile(const char *input_path, const char *output_path) {
         return 1;
     }
     if (!ast) {
-        fprintf(stderr, "native: parse error\n");
+        fprintf(stderr, "Error: native: parse error\n");
         free_program(&program);
         g_program = NULL;
         return 1;
@@ -2542,7 +2585,7 @@ static int native_compile(const char *input_path, const char *output_path) {
 
     FILE *out = fopen(output_path, "w");
     if (!out) {
-        fprintf(stderr, "Cannot write '%s'\n", output_path);
+        fprintf(stderr, "Error: cannot write '%s'\n", output_path);
         cg_func_count = 0;
         cg_class_count = 0;
         cg_dse = 0;
@@ -2564,6 +2607,7 @@ static int native_compile(const char *input_path, const char *output_path) {
     cg_emit("#pragma GCC diagnostic ignored \"-Wunused-function\"\n");
     cg_emit("#endif\n");
     cg_emit("#include \"quanto.c\"\n\n");
+    cg_emit("static Program *g_qs_native_program = NULL;\n\n");
 
     {
         size_t src_total = 0;
@@ -2623,6 +2667,8 @@ static int native_compile(const char *input_path, const char *output_path) {
     cg_emit("\n");
 
     cg_emit("int main(void) {\n");
+    cg_emit("    free_call_stack();\n");
+    cg_emit("    free_call_stack();\n");
     cg_emit("    object_registry_init();\n");
     cg_emit("    task_queue_init();\n");
     cg_emit("    Environment env_storage = {0};\n");

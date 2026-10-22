@@ -43,6 +43,15 @@ static QS_UNUSED_FN QS_NOINLINE void qs_raise(const char *msg) {
     }
     fflush(stdout);
     fprintf(stderr, "Error: %s\n", g_qs_error);
+    if (g_call_stack_count) {
+        fprintf(stderr, "Stack trace:\n");
+        for (size_t i = g_call_stack_count; i > 0; i--) {
+            fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
+        }
+    } else {
+        fprintf(stderr, "Stack trace:\n");
+        fprintf(stderr, "  at <native> at a_native.qs:1\n");
+    }
     exit(1);
 }
 
@@ -805,6 +814,68 @@ static QS_UNUSED_FN Value qs_index(Value obj, Value idx) {
     return result;
 }
 
+static QS_UNUSED_FN Value qs_opt_index(Value obj, Value idx) {
+    Value result = make_null();
+    if (obj.type == VALUE_DICT) {
+        if (idx.type != VALUE_STRING) {
+            free_value(idx);
+            free_value(obj);
+            qs_raise("dict index must be a string");
+            return make_null();
+        }
+        int found = dict_find(&obj.as.dict, idx.as.string);
+        if (found >= 0) {
+            result = clone_value(obj.as.dict.entries[found].value);
+        }
+    } else if (obj.type == VALUE_LIST) {
+        long i = (idx.type == VALUE_INTEGER) ? idx.as.integer : 0;
+        if (i > 0) i = i - 1;
+        else if (i < 0) i = (long)obj.as.list.count + i;
+        if (idx.type == VALUE_INTEGER && i >= 0 && (size_t)i < obj.as.list.count) {
+            result = clone_value(obj.as.list.items[i]);
+        }
+    } else if (obj.type == VALUE_STRING) {
+        long raw = (idx.type == VALUE_INTEGER) ? idx.as.integer : 0;
+        long i = raw;
+        if (i > 0) i = i - 1;
+        else if (i < 0) i = (long)strlen(obj.as.string) + i;
+        if (idx.type == VALUE_INTEGER && i >= 0 && (size_t)i < strlen(obj.as.string)) {
+            char letter[2] = {obj.as.string[i], '\0'};
+            result = make_string_owned(qs_strdup(letter));
+        }
+    }
+    free_value(idx);
+    free_value(obj);
+    return result;
+}
+
+static QS_UNUSED_FN Value qs_opt_field(Environment *env, Value obj, const char *field) {
+    Value result = make_null();
+    if (obj.type == VALUE_DICT) {
+        int found = dict_find(&obj.as.dict, field);
+        if (found >= 0) {
+            result = clone_value(obj.as.dict.entries[found].value);
+        }
+    } else if (obj.type == VALUE_OBJECT) {
+        for (size_t i = 0; i < obj.as.object.data->fields.count; i++) {
+            if (strcmp(obj.as.object.data->fields.entries[i].key, field) == 0) {
+                result = clone_value(obj.as.object.data->fields.entries[i].value);
+                break;
+            }
+        }
+        if (result.type == VALUE_NULL) {
+            char method_key[256];
+            snprintf(method_key, sizeof(method_key), "%s.%s", obj.as.object.data->class_name, field);
+            int idx = find_variable(env, method_key);
+            if (idx >= 0) {
+                result = clone_value(env->items[idx].value);
+            }
+        }
+    }
+    free_value(obj);
+    return result;
+}
+
 static QS_UNUSED_FN void qs_store_index(Value obj, Value idx, Value value) {
     if (obj.type == VALUE_LIST) {
         long i = (idx.type == VALUE_INTEGER) ? idx.as.integer : 0;
@@ -1099,7 +1170,8 @@ static QS_UNUSED_FN void qs_import(Environment *env, const char *text) {
     ParseError err = {0};
     execute_range(&sub, env, 0, sub.count, &err);
     if (err.message[0]) {
-        fprintf(stderr, "Error at line %d: %s\n", err.line, err.message);
+        fprintf(stderr, "Error: %s\n", err.message);
+        if (err.line > 0) fprintf(stderr, "  at %s:%d:%d\n", "a_native.qs", err.line, err.column > 0 ? err.column : 1);
     }
     free_program(&sub);
     g_program = saved;

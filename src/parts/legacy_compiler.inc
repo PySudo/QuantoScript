@@ -1022,7 +1022,7 @@ static int compiler_write_c(const char *generated_path, Program *program, const 
     fprintf(out, "    return 0;\n\n");
     fprintf(out, "qs_error:\n");
     fprintf(out, "    fprintf(stderr, \"SyntaxError: %%s\\nline %%d, column %%d\\n\", err.message, err.line, err.column);\n");
-    fprintf(out, "    if (g_call_stack_count) { fprintf(stderr, \"stack trace:\\n\"); for (size_t i = g_call_stack_count; i > 0; i--) fprintf(stderr, \"  at %%s\\n\", g_call_stack[i - 1]); }\n");
+    fprintf(out, "    if (g_call_stack_count) { fprintf(stderr, \"Stack trace:\\n\"); for (size_t i = g_call_stack_count; i > 0; i--) fprintf(stderr, \"  at %%s\\n\", g_call_stack[i - 1]); }\n");
     fprintf(out, "    free_environment(&env);\n");
     fprintf(out, "    free_program(&program);\n");
     fprintf(out, "    free_functions();\n");

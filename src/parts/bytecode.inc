@@ -19,6 +19,7 @@ typedef enum {
     OP_GREATER_EQUAL,
     OP_AND,
     OP_OR,
+    OP_NULLCOAL,
     OP_NOT,
     OP_IN,
     OP_PRINT,
@@ -40,6 +41,7 @@ typedef enum {
     OP_EVAL_STMT,
     OP_SLICE,
     OP_JUMP_IF_TRUE,
+    OP_JUMP_IF_NOT_NULL,
     OP_CALL_USER_FUNC,
     OP_TRY_PUSH,
     OP_CATCH_END,
@@ -50,7 +52,8 @@ typedef enum {
     OP_GET_FIELD,
     OP_SET_FIELD,
     OP_THROW,
-    OP_CALL_KW
+    OP_CALL_KW,
+    OP_OPT_FIELD
 } Opcode;
 
 typedef struct {
@@ -293,6 +296,8 @@ static const char *opcode_name(Opcode op) {
         case OP_EVAL_STMT: return "EVAL_STMT";
         case OP_SLICE: return "SLICE";
         case OP_JUMP_IF_TRUE: return "JUMP_IF_TRUE";
+        case OP_JUMP_IF_NOT_NULL: return "JUMP_IF_NOT_NULL";
+        case OP_NULLCOAL: return "NULLCOAL";
         case OP_CALL_USER_FUNC: return "CALL_USER_FUNC";
         case OP_TRY_PUSH: return "TRY_PUSH";
         case OP_CATCH_END: return "CATCH_END";
@@ -303,6 +308,7 @@ static const char *opcode_name(Opcode op) {
         case OP_SET_FIELD: return "SET_FIELD";
         case OP_THROW: return "THROW";
         case OP_CALL_KW: return "CALL_KW";
+        case OP_OPT_FIELD: return "OPT_FIELD";
     }
     return "UNKNOWN";
 }
@@ -324,8 +330,8 @@ static QS_UNUSED_FN void bytecode_dump(BytecodeProgram *prog, const char *label)
                 if (instr->arg.type == VALUE_STRING && instr->arg.as.string)
                     fprintf(stderr, " '%s'", instr->arg.as.string);
                 break;
-            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
-                fprintf(stderr, " -> [%d]", instr->arg_i);
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL:
+                printf(" %d", instr->arg_i);
                 break;
             case OP_TRY_PUSH:
                 fprintf(stderr, " -> [%d] (catch target)", instr->arg_i);
@@ -338,7 +344,7 @@ static QS_UNUSED_FN void bytecode_dump(BytecodeProgram *prog, const char *label)
                 if (instr->arg.type == VALUE_STRING && instr->arg.as.string)
                     fprintf(stderr, " '%s' argc=%d", instr->arg.as.string, instr->arg_i);
                 break;
-            case OP_GET_FIELD: case OP_SET_FIELD:
+            case OP_GET_FIELD: case OP_SET_FIELD: case OP_OPT_FIELD:
                 if (instr->arg.type == VALUE_STRING && instr->arg.as.string)
                     fprintf(stderr, " '%s'", instr->arg.as.string);
                 break;
@@ -393,7 +399,7 @@ static int bytecode_validate(BytecodeProgram *prog, const char *label) {
     for (size_t i = 0; i < prog->count; i++) {
         Instruction *instr = &prog->instructions[i];
         switch (instr->op) {
-            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL:
                 if (instr->arg_i < 0 || (size_t)instr->arg_i >= prog->count) {
                     fprintf(stderr, "VALIDATE ERROR [%zu] %s: jump target %d out of range [0..%zu]\n", i, opcode_name(instr->op), instr->arg_i, prog->count - 1);
                     errors++;

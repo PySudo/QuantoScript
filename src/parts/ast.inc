@@ -8,7 +8,7 @@ typedef enum {
     AST_BINARY_ADD, AST_BINARY_SUB, AST_BINARY_MUL, AST_BINARY_DIV, AST_BINARY_MOD,
     AST_BINARY_EQ, AST_BINARY_NEQ,
     AST_BINARY_LT, AST_BINARY_GT, AST_BINARY_LTE, AST_BINARY_GTE,
-    AST_BINARY_AND, AST_BINARY_OR,
+    AST_BINARY_AND, AST_BINARY_OR, AST_BINARY_NULLCOAL,
     AST_BINARY_IN,
 
     AST_CHAINED_CMP,
@@ -49,6 +49,7 @@ typedef enum {
     AST_FIELD_DEF,
     AST_NEW,
     AST_FIELD_ACCESS,
+    AST_OPTIONAL_CHAIN,
     AST_FIELD_ASSIGN,
 } ASTNodeType;
 
@@ -122,6 +123,8 @@ struct ASTNode {
         struct { ASTNode *object; char *field; } field_access;
 
         struct { ASTNode *object; char *field; ASTNode *value; } field_assign;
+
+        struct { ASTNode *object; char *name; ASTNode **args; int argc; ASTNode *key; int kind; } optional_chain;
     } as;
 };
 
@@ -250,6 +253,17 @@ static ASTNode *ast_field_assign(ASTNode *object, char *field, ASTNode *value, i
     return n;
 }
 
+static QS_UNUSED_FN ASTNode *ast_optional_chain(ASTNode *object, char *name, ASTNode **args, int argc, ASTNode *key, int kind, int line) {
+    ASTNode *n = ast_new(AST_OPTIONAL_CHAIN, line);
+    n->as.optional_chain.object = object;
+    n->as.optional_chain.name = name;
+    n->as.optional_chain.args = args;
+    n->as.optional_chain.argc = argc;
+    n->as.optional_chain.key = key;
+    n->as.optional_chain.kind = kind;
+    return n;
+}
+
 static ASTNode *ast_list_comp(ASTNode *expr, char *var, ASTNode *iterable, ASTNode *cond, int line) {
     ASTNode *n = ast_new(AST_LIST_COMP, line);
     n->as.comp.expr = expr;
@@ -275,7 +289,7 @@ static void ast_free(ASTNode *n) {
         case AST_BINARY_EQ: case AST_BINARY_NEQ:
         case AST_BINARY_LT: case AST_BINARY_GT:
         case AST_BINARY_LTE: case AST_BINARY_GTE:
-        case AST_BINARY_AND: case AST_BINARY_OR:
+        case AST_BINARY_AND: case AST_BINARY_OR: case AST_BINARY_NULLCOAL:
             ast_free(n->as.binary.left);
             ast_free(n->as.binary.right);
             break;
@@ -441,6 +455,13 @@ static void ast_free(ASTNode *n) {
             ast_free(n->as.field_assign.object);
             free(n->as.field_assign.field);
             ast_free(n->as.field_assign.value);
+            break;
+        case AST_OPTIONAL_CHAIN:
+            ast_free(n->as.optional_chain.object);
+            free(n->as.optional_chain.name);
+            for (int i = 0; i < n->as.optional_chain.argc; i++) ast_free(n->as.optional_chain.args[i]);
+            free(n->as.optional_chain.args);
+            ast_free(n->as.optional_chain.key);
             break;
     }
     free(n);

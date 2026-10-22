@@ -5,6 +5,7 @@ All notable changes to QuantoScript will be documented in this file.
 ## [Unreleased]
 
 ### Features
+- New operators across every engine (interpreter, `qs vm`, `qs build`/qvm, and native `qs native`): `??` (null coalescing) returns its left operand unless it is `null`, in which case it returns the right operand; `?.` and `?[` (optional chaining) return `null` instead of raising when the receiver is `null` or the field, method, or key is missing, so `user?.name`, `user?.greet()`, `user?["id"]`, and `data?.missing` (on a map) are safe and chains stop at the first missing or null link.
 - Maps now use a hash index for key lookup instead of a linear scan, in every engine (interpreter, `qs vm`, `qs build`, and native `qs native`). `has`, `get`, `get(key, default)`, `keys`, `items`, and `remove` keep insertion order for iteration, but `has`/`get`/`remove` are constant-time on average. Existing programs and outputs are unchanged.
 - `qs native` now recognizes the common built-in map and string methods (`has`, `get`, `keys`, `values`, `items`, `split`, `join`, `contains`, `indexOf`, `substring`, `startsWith`, `endsWith`, `trimStart`, `trimEnd`, `title`, `replace`, `repeat`, `reverse`) and emits direct calls to specialized C helpers instead of the generic `qs_method_call` dispatcher. Each call keeps a runtime type guard and falls back to the generic path when the receiver is not the expected type, so behaviour is unchanged. `len(...)` is also inlined for strings, lists, and maps.
 

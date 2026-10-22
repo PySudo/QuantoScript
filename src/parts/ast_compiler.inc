@@ -200,6 +200,39 @@ static void astc_compile_expr(ASTNode *node, BytecodeProgram *prog) {
             break;
         }
 
+        case AST_BINARY_NULLCOAL: {
+            astc_compile_expr(node->as.binary.left, prog);
+            astc_compile_expr(node->as.binary.right, prog);
+            emit(prog, OP_NULLCOAL, make_null(), 0, node->line);
+            break;
+        }
+
+        case AST_OPTIONAL_CHAIN: {
+            astc_compile_expr(node->as.optional_chain.object, prog);
+            int access = prog->count;
+            emit(prog, OP_JUMP_IF_NOT_NULL, make_null(), 0, node->line);
+            emit(prog, OP_POP, make_null(), 0, node->line);
+            emit(prog, OP_LOAD_CONST, make_null(), add_constant(prog, make_null()), node->line);
+            int skip = prog->count;
+            emit(prog, OP_JUMP, make_null(), 0, node->line);
+            prog->instructions[access].arg_i = prog->count;
+            if (node->as.optional_chain.kind == 1) {
+                if (node->as.optional_chain.key) astc_compile_expr(node->as.optional_chain.key, prog);
+                else { emit(prog, OP_LOAD_CONST, make_null(), add_constant(prog, make_null()), node->line); }
+                emit(prog, OP_LOAD_INDEX, make_null(), 0, node->line);
+            } else if (node->as.optional_chain.argc < 0) {
+                emit(prog, OP_OPT_FIELD, make_string_owned(qs_strdup(node->as.optional_chain.name)), 0, node->line);
+            } else {
+                for (int i = 0; i < node->as.optional_chain.argc; i++) {
+                    astc_compile_expr(node->as.optional_chain.args[i], prog);
+                }
+                int argc = node->as.optional_chain.argc < 0 ? 0 : node->as.optional_chain.argc;
+                emit(prog, OP_CALL_METHOD, make_string_owned(qs_strdup(node->as.optional_chain.name)), argc, node->line);
+            }
+            prog->instructions[skip].arg_i = prog->count;
+            break;
+        }
+
         case AST_UNARY_NEG: {
             astc_compile_expr(node->as.unary.operand, prog);
             emit(prog, OP_NEG, make_null(), 0, node->line);

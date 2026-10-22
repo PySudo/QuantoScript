@@ -1,5 +1,5 @@
 #ifndef QS_VERSION
-#define QS_VERSION "2.1.0"
+#define QS_VERSION "2.2.0"
 #endif
 
 typedef enum {
@@ -187,6 +187,11 @@ static int g_module_func_depth = 0;
 
 static int g_var_is_global = 0;
 static Value g_return_value;
+typedef struct {
+    char *func_name;
+    char *file;
+    int line;
+} CallStackEntry;
 static char **g_call_stack = NULL;
 static size_t g_call_stack_count = 0;
 static size_t g_call_stack_capacity = 0;

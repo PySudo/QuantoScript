@@ -420,6 +420,48 @@ static ASTNode *ast_parse_postfix(ASTParser *p) {
 
     while (1) {
         ast_skip(p);
+        size_t tlen = strlen(p->text);
+
+        if (p->text[p->pos] == '?' && p->pos + 1 < tlen && p->text[p->pos + 1] == '.' &&
+            (p->pos + 2 >= tlen || p->text[p->pos + 2] != '.')) {
+            p->pos += 2;
+            char *method = ast_parse_name(p);
+            if (!method) { ast_free(node); return NULL; }
+            ast_skip(p);
+            if (p->text[p->pos] == '(') {
+                p->pos++;
+                ASTNode **args = NULL;
+                int argc = 0;
+                ast_skip(p);
+                while (p->text[p->pos] && p->text[p->pos] != ')') {
+                    ASTNode *arg = ast_parse_expression(p);
+                    argc++;
+                    args = realloc(args, argc * sizeof(ASTNode *));
+                    args[argc - 1] = arg;
+                    ast_skip(p);
+                    if (p->text[p->pos] == ',') p->pos++;
+                    ast_skip(p);
+                }
+                if (p->text[p->pos] == ')') p->pos++;
+                node = ast_optional_chain(node, method, args, argc, NULL, 0, p->line);
+            } else {
+                node = ast_optional_chain(node, method, NULL, -1, NULL, 0, p->line);
+            }
+            continue;
+        }
+
+        if (p->text[p->pos] == '?' && p->pos + 1 < tlen && p->text[p->pos + 1] == '[') {
+            p->pos += 2;
+            ast_skip(p);
+            ASTNode *key = NULL;
+            if (p->text[p->pos] != ']') {
+                key = ast_parse_expression(p);
+            }
+            ast_skip(p);
+            if (p->text[p->pos] == ']') p->pos++;
+            node = ast_optional_chain(node, NULL, NULL, 0, key, 1, p->line);
+            continue;
+        }
 
         if (p->text[p->pos] == '.') {
             p->pos++;
@@ -515,6 +557,7 @@ static int ast_get_binary_type(const char *op) {
     if (strcmp(op, ">=") == 0) return AST_BINARY_GTE;
     if (strcmp(op, "and") == 0) return AST_BINARY_AND;
     if (strcmp(op, "or") == 0) return AST_BINARY_OR;
+    if (strcmp(op, "??") == 0) return AST_BINARY_NULLCOAL;
     return -1;
 }
 
@@ -675,14 +718,29 @@ static ASTNode *ast_parse_and(ASTParser *p) {
     return left;
 }
 
-static ASTNode *ast_parse_expression(ASTParser *p) {
+static ASTNode *ast_parse_nullcoal(ASTParser *p) {
     ASTNode *left = ast_parse_and(p);
+    if (!left) return NULL;
+    while (1) {
+        ast_skip(p);
+        if (p->text[p->pos] == '?' && p->text[p->pos + 1] == '?') {
+            p->pos += 2;
+            ASTNode *right = ast_parse_and(p);
+            if (!right) { ast_free(left); return NULL; }
+            left = ast_binary(AST_BINARY_NULLCOAL, left, right, p->line);
+        } else break;
+    }
+    return left;
+}
+
+static ASTNode *ast_parse_expression(ASTParser *p) {
+    ASTNode *left = ast_parse_nullcoal(p);
     if (!left) return NULL;
     while (1) {
         ast_skip(p);
         if (strncmp(p->text + p->pos, "or", 2) == 0 && !ast_is_name_part_char(p->text[p->pos + 2])) {
             p->pos += 2;
-            ASTNode *right = ast_parse_and(p);
+            ASTNode *right = ast_parse_nullcoal(p);
             if (!right) { ast_free(left); return NULL; }
             left = ast_binary(AST_BINARY_OR, left, right, p->line);
         } else break;

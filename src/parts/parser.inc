@@ -1901,7 +1901,110 @@ static int parse_postfix(Parser *parser, Value *out) {
     int target_global = g_var_is_global;
 
     while (1) {
-        if (match_char(parser, '.')) {
+        int optional_null = 0;
+        int is_optional_syntax = 0;
+        int is_dot = 0;
+        int is_optional_index = 0;
+        skip_spaces(parser);
+        size_t tlen = strlen(parser->text);
+
+        if (parser->text[parser->pos] == '?' && parser->pos + 1 < tlen && parser->text[parser->pos + 1] == '.' &&
+            (parser->pos + 2 >= tlen || parser->text[parser->pos + 2] != '.')) {
+            parser->pos += 2;
+            is_dot = 1;
+            is_optional_syntax = 1;
+            optional_null = ((*out).type == VALUE_NULL);
+        } else if (parser->text[parser->pos] == '?' && parser->pos + 1 < tlen && parser->text[parser->pos + 1] == '[') {
+            parser->pos += 2;
+            is_optional_index = 1;
+            is_optional_syntax = 1;
+            optional_null = ((*out).type == VALUE_NULL);
+        } else if (match_char(parser, '.')) {
+            is_dot = 1;
+        }
+
+        if (is_optional_index) {
+            writable = 0;
+            parser->var_index = -1;
+            g_var_is_global = 0;
+            Value key = make_null();
+            skip_spaces(parser);
+            if (parser->text[parser->pos] != ']') {
+                if (!parse_expression(parser, &key)) {
+                    return 0;
+                }
+            }
+            if (optional_null) {
+                free_value(key);
+                skip_spaces(parser);
+                if (!match_char(parser, ']')) {
+                    parser_error(parser, "index needs ']'");
+                    return 0;
+                }
+                continue;
+            }
+            if (!match_char(parser, ']')) {
+                parser_error(parser, "index needs ']'");
+                free_value(key);
+                return 0;
+            }
+            Value selected = make_null();
+            if (out->type == VALUE_DICT) {
+                if (key.type != VALUE_STRING) {
+                    parser_error(parser, "dict index must be a string");
+                    free_value(key);
+                    return 0;
+                }
+                int found = dict_find(&out->as.dict, key.as.string);
+                if (found < 0) {
+                    if (!is_optional_syntax) {
+                        parser_error(parser, "dict key not found");
+                        free_value(key);
+                        return 0;
+                    }
+                } else {
+                    selected = clone_value(out->as.dict.entries[found].value);
+                }
+            } else if (out->type == VALUE_LIST) {
+                long index;
+                if (key.type != VALUE_INTEGER || !normalize_index(key.as.integer, out->as.list.count, &index)) {
+                    if (!is_optional_syntax) {
+                        parser_error(parser, key.type != VALUE_INTEGER ? "index must be a number" : "list index is out of range");
+                        free_value(key);
+                        return 0;
+                    }
+                } else {
+                    selected = clone_value(out->as.list.items[index]);
+                }
+            } else if (out->type == VALUE_STRING) {
+                size_t len = strlen(out->as.string);
+                long index;
+                if (key.type != VALUE_INTEGER || !normalize_index(key.as.integer, len, &index)) {
+                    if (!is_optional_syntax) {
+                        parser_error(parser, key.type != VALUE_INTEGER ? "index must be a number" : "string index is out of range");
+                        free_value(key);
+                        return 0;
+                    }
+                } else {
+                    char buf[8];
+                    buf[0] = out->as.string[index];
+                    buf[1] = '\0';
+                    selected = make_string_owned(qs_strdup(buf));
+                }
+            } else {
+                if (!is_optional_syntax) {
+                    parser_error(parser, "value is not indexable");
+                    free_value(key);
+                    return 0;
+                }
+            }
+            free_value(*out);
+            free_value(key);
+            *out = selected;
+            continue;
+        }
+
+        if (is_dot) {
             char *method;
             if (!parse_name(parser, &method)) {
                 free_value(*out);
@@ -1916,6 +2019,31 @@ static int parse_postfix(Parser *parser, Value *out) {
                     return 0;
                 }
             }
+            if (optional_null) {
+                for (size_t i = 0; i < args.count; i++) free_value(args.items[i]);
+                free(args.items);
+                free(method);
+                writable = 0;
+                parser->var_index = -1;
+                g_var_is_global = 0;
+                continue;
+            }
+            if (is_optional_syntax && out->type == VALUE_DICT && args.count == 0) {
+                int found = dict_find(&out->as.dict, method);
+                Value selected = (found >= 0)
+                    ? clone_value(out->as.dict.entries[found].value)
+                    : make_null();
+                for (size_t i = 0; i < args.count; i++) free_value(args.items[i]);
+                free(args.items);
+                free(method);
+                free_value(*out);
+                *out = selected;
+                writable = 0;
+                parser->var_index = -1;
+                g_var_is_global = 0;
+                continue;
+            }
+            ParseError err_snapshot = *parser->err;
             int ok = apply_method(parser, out, method, &args);
             int is_mutation = (strcmp(method, "extend") == 0 || strcmp(method, "append") == 0 ||
                  strcmp(method, "sort") == 0 || strcmp(method, "remove") == 0 ||
@@ -1929,6 +2057,15 @@ static int parse_postfix(Parser *parser, Value *out) {
             free(args.items);
             free(method);
             if (!ok) {
+                if (is_optional_syntax) {
+                    *parser->err = err_snapshot;
+                    free_value(*out);
+                    *out = make_null();
+                    writable = 0;
+                    parser->var_index = -1;
+                    g_var_is_global = 0;
+                    continue;
+                }
                 free_value(*out);
                 return 0;
             }
@@ -2444,14 +2581,35 @@ static int parse_and(Parser *parser, Value *out) {
     return 1;
 }
 
-static int parse_expression(Parser *parser, Value *out) {
+static int parse_nullcoal(Parser *parser, Value *out) {
     if (!parse_and(parser, out)) {
+        return 0;
+    }
+
+    while (match_op(parser, "??")) {
+        Value right;
+        if (!parse_and(parser, &right)) {
+            free_value(*out);
+            return 0;
+        }
+        if (out->type == VALUE_NULL) {
+            free_value(*out);
+            *out = right;
+        } else {
+            free_value(right);
+        }
+    }
+    return 1;
+}
+
+static int parse_expression(Parser *parser, Value *out) {
+    if (!parse_nullcoal(parser, out)) {
         return 0;
     }
 
     while (match_word(parser, "or")) {
         Value right;
-        if (!parse_and(parser, &right)) {
+        if (!parse_nullcoal(parser, &right)) {
             free_value(*out);
             return 0;
         }

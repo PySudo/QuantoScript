@@ -9,27 +9,30 @@ static int run_program(Program *program) {
 
     ParseError err = {0};
     if (!collect_imports(program, &env, &err)) {
-        fprintf(stderr, "SyntaxError: %s\nline %d, column %d\n", err.message, err.line, err.column);
+        fprintf(stderr, "Error: %s\n", err.message);
+        if (err.line > 0) fprintf(stderr, "  at %s:%d:%d\n", program->path ? program->path : "<unknown>", err.line, err.column > 0 ? err.column : 1);
         if (g_call_stack_count) {
-            fprintf(stderr, "stack trace:\n");
+            fprintf(stderr, "Stack trace:\n");
             for (size_t i = g_call_stack_count; i > 0; i--) {
                 fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
             }
         }
         ok = 0;
     } else if (!collect_functions(program, &err)) {
-        fprintf(stderr, "SyntaxError: %s\nline %d, column %d\n", err.message, err.line, err.column);
+        fprintf(stderr, "Error: %s\n", err.message);
+        if (err.line > 0) fprintf(stderr, "  at %s:%d:%d\n", program->path ? program->path : "<unknown>", err.line, err.column > 0 ? err.column : 1);
         if (g_call_stack_count) {
-            fprintf(stderr, "stack trace:\n");
+            fprintf(stderr, "Stack trace:\n");
             for (size_t i = g_call_stack_count; i > 0; i--) {
                 fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
             }
         }
         ok = 0;
     } else if (!execute_range(program, &env, 0, program->count, &err)) {
-        fprintf(stderr, "SyntaxError: %s\nline %d, column %d\n", err.message, err.line, err.column);
+        fprintf(stderr, "Error: %s\n", err.message);
+        if (err.line > 0) fprintf(stderr, "  at %s:%d:%d\n", program->path ? program->path : "<unknown>", err.line, err.column > 0 ? err.column : 1);
         if (g_call_stack_count) {
-            fprintf(stderr, "stack trace:\n");
+            fprintf(stderr, "Stack trace:\n");
             for (size_t i = g_call_stack_count; i > 0; i--) {
                 fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
             }
@@ -93,7 +96,8 @@ static QS_UNUSED_FN int check_file(const char *path) {
     if (ok) {
         printf("ok: %s\n", path);
     } else {
-        fprintf(stderr, "SyntaxError: %s\nline %d, column %d\n", err.message, err.line, err.column);
+        fprintf(stderr, "Error: %s\n", err.message);
+        if (err.line > 0) fprintf(stderr, "  at %s:%d:%d\n", program.path ? program.path : path, err.line, err.column > 0 ? err.column : 1);
     }
     free_environment(&env);
     object_registry_free_all();
@@ -232,10 +236,10 @@ static QS_UNUSED_FN int run_repl(void) {
                 if (line_starts_with(buffer, "from", &check_pos) || line_starts_with(buffer, "import", &check_pos)) {
                     program_push(&repl_prog, qs_strdup(buffer));
                     if (!collect_imports(&repl_prog, &env, &err)) {
-                        fprintf(stderr, "SyntaxError: %s\n", err.message);
-                        if (err.line > 0) {
-                            fprintf(stderr, "line %d, column %d\n", err.line, err.column);
-                        }
+                    fprintf(stderr, "Error: %s\n", err.message);
+                    if (err.line > 0) {
+                        fprintf(stderr, "  at <repl>:%d:%d\n", err.line, err.column > 0 ? err.column : 1);
+                    }
                     }
                 } else {
                     size_t start_line = repl_prog.count;
@@ -263,9 +267,15 @@ static QS_UNUSED_FN int run_repl(void) {
 
                     ParseError exec_err = {0};
                     if (!execute_range(&repl_prog, &env, start_line, repl_prog.count, &exec_err)) {
-                        fprintf(stderr, "SyntaxError: %s\n", exec_err.message);
+                        fprintf(stderr, "Error: %s\n", exec_err.message);
                         if (exec_err.line > 0) {
-                            fprintf(stderr, "line %d, column %d\n", exec_err.line, exec_err.column);
+                            fprintf(stderr, "  at <repl>:%d:%d\n", exec_err.line, exec_err.column > 0 ? exec_err.column : 1);
+                        }
+                        if (g_call_stack_count) {
+                            fprintf(stderr, "Stack trace:\n");
+                            for (size_t i = g_call_stack_count; i > 0; i--) {
+                                fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
+                            }
                         }
                     }
                 }
@@ -311,9 +321,9 @@ static QS_UNUSED_FN int run_repl(void) {
 
             if (line_starts_with(line, "from", &kw_check) || line_starts_with(line, "import", &kw_check)) {
                 if (!collect_imports(&repl_prog, &env, &err)) {
-                    fprintf(stderr, "SyntaxError: %s\n", err.message);
+                    fprintf(stderr, "Error: %s\n", err.message);
                     if (err.line > 0) {
-                        fprintf(stderr, "line %d, column %d\n", err.line, err.column);
+                        fprintf(stderr, "  at <repl>:%d:%d\n", err.line, err.column > 0 ? err.column : 1);
                     }
                 }
             } else {
@@ -321,18 +331,24 @@ static QS_UNUSED_FN int run_repl(void) {
                 collect_functions(&repl_prog, &collect_err);
                 ParseError exec_err = {0};
                 if (!execute_range(&repl_prog, &env, start_line, repl_prog.count, &exec_err)) {
-                    fprintf(stderr, "SyntaxError: %s\n", exec_err.message);
+                    fprintf(stderr, "Error: %s\n", exec_err.message);
                     if (exec_err.line > 0) {
-                        fprintf(stderr, "line %d, column %d\n", exec_err.line, exec_err.column);
+                        fprintf(stderr, "  at <repl>:%d:%d\n", exec_err.line, exec_err.column > 0 ? exec_err.column : 1);
+                    }
+                    if (g_call_stack_count) {
+                        fprintf(stderr, "Stack trace:\n");
+                        for (size_t i = g_call_stack_count; i > 0; i--) {
+                            fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
+                        }
                     }
                 }
             }
         } else if (find_assignment(line, &assignment_pos, &assign_op)) {
             if (execute_assignment(&env, line, assignment_pos, assign_op, 1, &err)) {
             } else {
-                fprintf(stderr, "SyntaxError: %s\n", err.message);
+                fprintf(stderr, "Error: %s\n", err.message);
                 if (err.line > 0) {
-                    fprintf(stderr, "line %d, column %d\n", err.line, err.column);
+                    fprintf(stderr, "  at <repl>:%d:%d\n", err.line, err.column > 0 ? err.column : 1);
                 }
             }
         } else {
@@ -342,9 +358,9 @@ static QS_UNUSED_FN int run_repl(void) {
             size_t imp_check = 0;
             if (line_starts_with(line, "from", &imp_check) || line_starts_with(line, "import", &imp_check)) {
                 if (!collect_imports(&repl_prog, &env, &err)) {
-                    fprintf(stderr, "SyntaxError: %s\n", err.message);
+                    fprintf(stderr, "Error: %s\n", err.message);
                     if (err.line > 0) {
-                        fprintf(stderr, "line %d, column %d\n", err.line, err.column);
+                        fprintf(stderr, "  at <repl>:%d:%d\n", err.line, err.column > 0 ? err.column : 1);
                     }
                 }
             } else {
@@ -352,9 +368,15 @@ static QS_UNUSED_FN int run_repl(void) {
                 collect_functions(&repl_prog, &collect_err);
                 ParseError exec_err = {0};
                 if (!execute_range(&repl_prog, &env, start_line, repl_prog.count, &exec_err)) {
-                    fprintf(stderr, "SyntaxError: %s\n", exec_err.message);
+                    fprintf(stderr, "Error: %s\n", exec_err.message);
                     if (exec_err.line > 0) {
-                        fprintf(stderr, "line %d, column %d\n", exec_err.line, exec_err.column);
+                        fprintf(stderr, "  at <repl>:%d:%d\n", exec_err.line, exec_err.column > 0 ? exec_err.column : 1);
+                    }
+                    if (g_call_stack_count) {
+                        fprintf(stderr, "Stack trace:\n");
+                        for (size_t i = g_call_stack_count; i > 0; i--) {
+                            fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
+                        }
                     }
                 }
             }
@@ -937,7 +959,7 @@ int main(int argc, char **argv) {
         }
         BytecodeProgram prog = {0};
         if (!compile_file_to_bytecode(file_arg, &prog)) {
-            fprintf(stderr, "Compilation failed\n");
+            fprintf(stderr, "Error: compilation failed\n");
             return 1;
         }
 
@@ -959,7 +981,7 @@ int main(int argc, char **argv) {
         if (ok) {
             printf("built %s -> %s\n", file_arg, outpath);
         } else {
-            fprintf(stderr, "Failed to write %s\n", outpath);
+            fprintf(stderr, "Error: failed to write %s\n", outpath);
         }
         bytecode_free(&prog);
         return ok ? 0 : 1;
@@ -1007,7 +1029,9 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
         strncat(out_path, ".exe", sizeof(out_path) - strlen(out_path) - 1);
 #endif
-        return native_build_c(c_path, out_path);
+        int brc = native_build_c(c_path, out_path);
+        if (brc != 0) fprintf(stderr, "Error: failed to build native binary\n");
+        return brc;
     }
     if (cmd && strcmp(cmd, "check") == 0) {
         if (file_arg == NULL) {

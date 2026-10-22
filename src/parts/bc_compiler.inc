@@ -17,9 +17,9 @@ static int compile_file_to_bytecode(const char *path, BytecodeProgram *prog) {
     ASTNode *ast = ast_parse_program(program);
     if (ast_parse_failed) {
         if (ast_parse_failed_msg[0] != '\0') {
-            fprintf(stderr, "SyntaxError: %s\n", ast_parse_failed_msg);
+            fprintf(stderr, "Error: %s\n", ast_parse_failed_msg);
         } else {
-            fprintf(stderr, "SyntaxError: expected a value\n");
+            fprintf(stderr, "Error: expected a value\n");
         }
         ast_parse_failed = 0;
         ast_parse_failed_line = 0;
@@ -29,7 +29,7 @@ static int compile_file_to_bytecode(const char *path, BytecodeProgram *prog) {
         return 0;
     }
     if (!ast) {
-        fprintf(stderr, "Parse error\n");
+        fprintf(stderr, "Error: parse error\n");
         free_program(program); free(program);
         return 0;
     }
@@ -72,7 +72,7 @@ static QS_UNUSED_FN int run_bytecode_file(const char *path) {
     object_registry_init();
     BytecodeProgram prog = {0};
     if (!compile_file_to_bytecode(path, &prog)) {
-        fprintf(stderr, "Compilation failed\n");
+        fprintf(stderr, "Error: compilation failed\n");
         return 1;
     }
     Environment env = {0};
@@ -81,9 +81,28 @@ static QS_UNUSED_FN int run_bytecode_file(const char *path) {
     g_vm_trace = g_trace_vm;
     if (g_vm_source_dir) { free(g_vm_source_dir); g_vm_source_dir = NULL; }
     g_vm_source_dir = path_dirname(path);
+    free_call_stack();
     int result = vm_execute(&vm);
     if (vm.pending_exception) {
-        fprintf(stderr, "%s\n", vm.exception_msg ? vm.exception_msg : "unhandled exception");
+        fprintf(stderr, "Error: %s\n", vm.exception_msg ? vm.exception_msg : "unhandled exception");
+        if (g_call_stack_count) {
+            fprintf(stderr, "Stack trace:\n");
+            for (size_t i = g_call_stack_count; i > 0; i--) {
+                fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
+            }
+        } else if (vm.frame_count > 0) {
+            fprintf(stderr, "Stack trace:\n");
+            for (int i = vm.frame_count; i > 0; i--) {
+                CallFrame *cf = &vm.frames[i - 1];
+                int l = 1;
+                if (cf->program && cf->saved_ip >= 0 && cf->saved_ip < (int)cf->program->count) {
+                    l = cf->program->instructions[cf->saved_ip].line;
+                    if (l < 1) l = 1;
+                }
+                const char *fname = (g_program && g_program->path) ? g_program->path : "<unknown>";
+                fprintf(stderr, "  at <vm> at %s:%d\n", fname, l);
+            }
+        }
         result = 1;
     }
     free(vm.exception_msg);

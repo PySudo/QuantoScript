@@ -5,7 +5,7 @@
 #include <errno.h>
 
 #define QVM_MAGIC          0x314D5651
-#define QVM_VERSION        4
+#define QVM_VERSION        6
 #define QVM_NO_CONST       (-1)
 #define QVM_FLAG_HAS_SOURCE  0x0001
 #define QVM_FLAG_HAS_CRC     0x0002
@@ -198,7 +198,7 @@ static QS_UNUSED_FN Value qvm_read_value(FILE *f) {
 }
 
 static int qvm_valid_opcode(uint8_t op) {
-    return op <= OP_CALL_KW;
+    return op <= OP_OPT_FIELD;
 }
 
 static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs, int func_count,
@@ -524,7 +524,7 @@ static int qvm_load(const char *path, QVMFile *qvm) {
     for (uint32_t i = 0; i < inst_count; i++) {
         Instruction *ins = &qvm->main_prog.instructions[i];
         switch (ins->op) {
-            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_TRY_PUSH:
+                case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL: case OP_TRY_PUSH:
                 if (ins->arg_i < 0 || (uint32_t)ins->arg_i >= inst_count) {
                     fprintf(stderr, "qvm: jump target %d out of range at instruction %u\n", ins->arg_i, i);
                     qvm_free(qvm); fclose(f); return 0;
@@ -543,7 +543,7 @@ static int qvm_load(const char *path, QVMFile *qvm) {
                 }
                 break;
             case OP_CALL_USER_FUNC: case OP_CALL_FUNC: case OP_CALL_METHOD: case OP_NEW:
-            case OP_GET_FIELD: case OP_SET_FIELD:
+            case OP_GET_FIELD: case OP_SET_FIELD: case OP_OPT_FIELD:
                 if (ins->arg.type != VALUE_STRING || !ins->arg.as.string) {
                     fprintf(stderr, "qvm: call/field instruction missing name at instruction %u\n", i);
                     qvm_free(qvm); fclose(f); return 0;
@@ -659,7 +659,7 @@ static int qvm_load(const char *path, QVMFile *qvm) {
         for (uint32_t bi = 0; bi < bcount; bi++) {
             Instruction *ins = &qvm->funcs[fi].body.instructions[bi];
             switch (ins->op) {
-                case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_TRY_PUSH:
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL: case OP_TRY_PUSH:
                     if (ins->arg_i < 0 || (uint32_t)ins->arg_i >= bcount) {
                         fprintf(stderr, "qvm: jump target %d out of range in '%s' at %u\n", ins->arg_i, qvm->funcs[fi].name, bi);
                         qvm_free(qvm); fclose(f); return 0;
@@ -741,11 +741,30 @@ static QS_UNUSED_FN int run_qvm_file(const char *path) {
         collect_functions(&src_prog, &ferr);
         have_src = 1;
     }
+    free_call_stack();
     int result = vm_execute(&vm);
     g_program = saved_g_program;
     if (have_src) free_program(&src_prog);
     if (vm.pending_exception) {
-        fprintf(stderr, "%s\n", vm.exception_msg ? vm.exception_msg : "unhandled exception");
+        fprintf(stderr, "Error: %s\n", vm.exception_msg ? vm.exception_msg : "unhandled exception");
+        if (g_call_stack_count) {
+            fprintf(stderr, "Stack trace:\n");
+            for (size_t i = g_call_stack_count; i > 0; i--) {
+                fprintf(stderr, "  at %s\n", g_call_stack[i - 1]);
+            }
+        } else if (vm.frame_count > 0) {
+            fprintf(stderr, "Stack trace:\n");
+            for (int i = vm.frame_count; i > 0; i--) {
+                CallFrame *cf = &vm.frames[i - 1];
+                int l = 1;
+                if (cf->program && cf->saved_ip >= 0 && cf->saved_ip < (int)cf->program->count) {
+                    l = cf->program->instructions[cf->saved_ip].line;
+                    if (l < 1) l = 1;
+                }
+                const char *fname = (g_program && g_program->path) ? g_program->path : "<unknown>";
+                fprintf(stderr, "  at <vm> at %s:%d\n", fname, l);
+            }
+        }
         result = 1;
     }
     free(vm.exception_msg);
@@ -803,7 +822,7 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
     int *labels = calloc(func->body.count, sizeof(int));
     for (size_t i = 0; i < func->body.count; i++) {
         Instruction *ins = &func->body.instructions[i];
-        if ((ins->op == OP_JUMP || ins->op == OP_JUMP_IF_FALSE || ins->op == OP_JUMP_IF_TRUE ||
+        if ((ins->op == OP_JUMP || ins->op == OP_JUMP_IF_FALSE || ins->op == OP_JUMP_IF_TRUE || ins->op == OP_JUMP_IF_NOT_NULL ||
              ins->op == OP_TRY_PUSH) && ins->arg_i >= 0 && (size_t)ins->arg_i < func->body.count) {
             labels[ins->arg_i] = 1;
         }
@@ -839,7 +858,7 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
             case OP_LOAD_LOCAL: case OP_STORE_LOCAL:
                 fprintf(stderr, "  slot=%d", ins->arg_i);
                 break;
-            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL:
                 fprintf(stderr, "  -> L%d", ins->arg_i);
                 break;
             case OP_TRY_PUSH:
@@ -857,7 +876,7 @@ static QS_UNUSED_FN void qvm_disassemble_func(CompiledFunc *func) {
                 else
                     fprintf(stderr, "  argc=%d", ins->arg_i);
                 break;
-            case OP_GET_FIELD: case OP_SET_FIELD:
+            case OP_GET_FIELD: case OP_SET_FIELD: case OP_OPT_FIELD:
                 if (ins->arg.type == VALUE_STRING && ins->arg.as.string)
                     fprintf(stderr, "  '%s'", ins->arg.as.string);
                 else
@@ -904,7 +923,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
     int *labels = calloc(qvm->main_prog.count, sizeof(int));
     for (size_t i = 0; i < qvm->main_prog.count; i++) {
         Instruction *ins = &qvm->main_prog.instructions[i];
-        if ((ins->op == OP_JUMP || ins->op == OP_JUMP_IF_FALSE || ins->op == OP_JUMP_IF_TRUE ||
+        if ((ins->op == OP_JUMP || ins->op == OP_JUMP_IF_FALSE || ins->op == OP_JUMP_IF_TRUE || ins->op == OP_JUMP_IF_NOT_NULL ||
              ins->op == OP_TRY_PUSH) && ins->arg_i >= 0 && (size_t)ins->arg_i < qvm->main_prog.count) {
             labels[ins->arg_i] = 1;
         }
@@ -938,7 +957,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
             case OP_LOAD_LOCAL: case OP_STORE_LOCAL:
                 fprintf(stderr, "  slot=%d", ins->arg_i);
                 break;
-            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL:
                 fprintf(stderr, "  -> L%d", ins->arg_i);
                 break;
             case OP_TRY_PUSH:
@@ -956,7 +975,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
                 else
                     fprintf(stderr, "  argc=%d", ins->arg_i);
                 break;
-            case OP_GET_FIELD: case OP_SET_FIELD:
+            case OP_GET_FIELD: case OP_SET_FIELD: case OP_OPT_FIELD:
                 if (ins->arg.type == VALUE_STRING && ins->arg.as.string)
                     fprintf(stderr, "  '%s'", ins->arg.as.string);
                 else
@@ -1020,7 +1039,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
         int *flabels = calloc(func->body.count, sizeof(int));
         for (size_t i = 0; i < func->body.count; i++) {
             Instruction *ins = &func->body.instructions[i];
-            if ((ins->op == OP_JUMP || ins->op == OP_JUMP_IF_FALSE || ins->op == OP_JUMP_IF_TRUE ||
+        if ((ins->op == OP_JUMP || ins->op == OP_JUMP_IF_FALSE || ins->op == OP_JUMP_IF_TRUE || ins->op == OP_JUMP_IF_NOT_NULL ||
                  ins->op == OP_TRY_PUSH) && ins->arg_i >= 0 && (size_t)ins->arg_i < func->body.count) {
                 flabels[ins->arg_i] = 1;
             }
@@ -1054,9 +1073,9 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
                 case OP_LOAD_LOCAL: case OP_STORE_LOCAL:
                     fprintf(stderr, "  slot=%d", ins->arg_i);
                     break;
-                case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE:
-                    fprintf(stderr, "  -> L%d", ins->arg_i);
-                    break;
+            case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_TRUE: case OP_JUMP_IF_NOT_NULL:
+                fprintf(stderr, "  -> L%d", ins->arg_i);
+                break;
                 case OP_TRY_PUSH:
                     fprintf(stderr, "  -> L%d", ins->arg_i);
                     break;
@@ -1072,7 +1091,7 @@ static void qvm_disassemble(QVMFile *qvm, const char *label) {
                     else
                         fprintf(stderr, "  argc=%d", ins->arg_i);
                     break;
-                case OP_GET_FIELD: case OP_SET_FIELD:
+                case OP_GET_FIELD: case OP_SET_FIELD: case OP_OPT_FIELD:
                     if (ins->arg.type == VALUE_STRING && ins->arg.as.string)
                         fprintf(stderr, "  '%s'", ins->arg.as.string);
                     else

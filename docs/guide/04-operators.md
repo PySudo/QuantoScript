@@ -121,6 +121,55 @@ print(not false)               # true
 
 ---
 
+## Null coalescing and optional chaining
+
+Two operators make working with `null` easier.
+
+### `??` — null coalescing
+
+`a ?? b` evaluates to `a` unless `a` is `null`, in which case it evaluates to `b`.
+It is handy for supplying a fallback value:
+
+```qscript
+name = null
+print(name ?? "anonymous")    # anonymous
+
+count = 0
+print(count ?? 10)            # 0  (0 is not null)
+```
+
+`??` binds looser than `and` but tighter than `or`, and may be chained:
+
+```qscript
+print(null ?? null ?? 7)      # 7
+```
+
+### `?.` and `?[` — optional chaining
+
+`obj?.field`, `obj?.method(...)`, and `obj?[key]` behave like their ordinary
+counterparts, except that when the value on the left is `null` — or when the
+field, method, or key is missing — the whole expression yields `null` instead of
+raising an error:
+
+```qscript
+user = null
+print(user?.name)             # null
+print(user?["id"])            # null
+
+data = {"id": 42}
+print(data?["id"])            # 42
+print(data?["missing"])       # null  (no such key, so null instead of an error)
+print(data?.missing?.deeper)  # null  (the chain stops at the first null)
+```
+
+Optional chains are safe to combine with `??`:
+
+```qscript
+print(user?.name ?? "guest")  # guest
+```
+
+---
+
 ## Membership
 
 The `in` operator tests whether a value appears inside a string (as a substring)

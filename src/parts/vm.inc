@@ -325,21 +325,23 @@ static int vm_execute(VM *vm) {
                             }
                         }
 
-                        if (frame_push(vm, body, vm->env)) {
-                            CallFrame *frame = &vm->frames[vm->frame_count - 1];
-                            int total_args = argc + 1;
-                            frame->local_count = cf ? cf->slot_count : total_args;
-                            frame->local_slots[0] = obj;
-                            for (int ai = 0; ai < argc && (ai + 1) < frame->local_count; ai++) {
-                                frame->local_slots[ai + 1] = clone_value(args_arr[ai]);
-                            }
+                    if (frame_push(vm, body, vm->env)) {
+                        CallFrame *frame = &vm->frames[vm->frame_count - 1];
+                        int total_args = argc + 1;
+                        frame->local_count = cf ? cf->slot_count : total_args;
+                        frame->local_slots[0] = obj;
+                        for (int ai = 0; ai < argc && (ai + 1) < frame->local_count; ai++) {
+                            frame->local_slots[ai + 1] = clone_value(args_arr[ai]);
+                        }
+                        call_stack_push(method_key, instr->line);
 
-                            vm_execute(vm);
+                        vm_execute(vm);
 
                             if (vm->pending_exception) {
                                 g_has_return = saved_return;
                                 g_return_value = saved_retval;
                                 frame_pop(vm);
+                                call_stack_pop();
                                 char *m = qs_strdup(vm->exception_msg ? vm->exception_msg : "exception");
                                 vm->pending_exception = 0;
                                 free(vm->exception_msg); vm->exception_msg = NULL;
@@ -357,6 +359,7 @@ static int vm_execute(VM *vm) {
                             g_has_return = saved_return;
                             g_return_value = saved_retval;
                             frame_pop(vm);
+                            call_stack_pop();
                         }
                     } else {
                         char err[256];
@@ -601,6 +604,17 @@ static int vm_execute(VM *vm) {
                 free_value(c);
                 break;
             }
+            case OP_NULLCOAL: {
+                Value r = vm_pop(vm), l = vm_pop(vm);
+                vm_push(vm, l.type != VALUE_NULL ? l : r);
+                if (l.type != VALUE_NULL) free_value(r); else free_value(l);
+                break;
+            }
+            case OP_JUMP_IF_NOT_NULL: {
+                if (vm->stack_top > 0 && vm->stack[vm->stack_top - 1].type != VALUE_NULL)
+                    vm->ip = instr->arg_i;
+                break;
+            }
             case OP_TRY_PUSH: {
                 if (vm->try_stack_top < 64) {
                     vm->try_stack[vm->try_stack_top] = instr->arg_i;
@@ -783,7 +797,7 @@ static int vm_execute(VM *vm) {
                     Value saved_retval = g_return_value;
                     g_has_return = 0;
 
-                    if (frame_push(vm, init_body, vm->env)) {
+                    if (frame_push(vm, init_body, vm->env)) { call_stack_push("__init__", instr->line);
                         CallFrame *frame = &vm->frames[vm->frame_count - 1];
                         int total_args = argc + 1;
                         frame->local_count = cf ? cf->slot_count : total_args;
@@ -875,6 +889,38 @@ static int vm_execute(VM *vm) {
                     vm_raise(vm, err);
                     vm_push(vm, obj);
                 }
+                break;
+            }
+
+            case OP_OPT_FIELD: {
+                const char *field = instr->arg.as.string;
+                Value obj = vm_pop(vm);
+                Value result = make_null();
+
+                if (obj.type == VALUE_DICT) {
+                    int found = dict_find(&obj.as.dict, field);
+                    if (found >= 0) {
+                        result = clone_value(obj.as.dict.entries[found].value);
+                    }
+                } else if (obj.type == VALUE_OBJECT) {
+                    for (size_t i = 0; i < obj.as.object.data->fields.count; i++) {
+                        if (strcmp(obj.as.object.data->fields.entries[i].key, field) == 0) {
+                            result = clone_value(obj.as.object.data->fields.entries[i].value);
+                            break;
+                        }
+                    }
+                    if (result.type == VALUE_NULL) {
+                        char method_key[256];
+                        snprintf(method_key, sizeof(method_key), "%s.%s", obj.as.object.data->class_name, field);
+                        int idx = find_variable(vm->env, method_key);
+                        if (idx >= 0) {
+                            result = clone_value(vm->env->items[idx].value);
+                        }
+                    }
+                }
+
+                free_value(obj);
+                vm_push(vm, result);
                 break;
             }
         }
