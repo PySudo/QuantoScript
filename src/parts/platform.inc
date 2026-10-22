@@ -14,10 +14,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#if defined(__wasm__) || defined(__wasi__)
+#define QS_WASM 1
+#else
+#define QS_WASM 0
+#endif
+
+#if !QS_WASM
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#endif
 
-#if defined(_MSC_VER)
+#if QS_WASM
+#define QS_HAVE_POSIX_REGEX 0
+#elif defined(_MSC_VER)
 #define QS_HAVE_POSIX_REGEX 0
 #elif defined(__has_include)
 #if __has_include(<regex.h>)
@@ -29,7 +40,25 @@
 #define QS_HAVE_POSIX_REGEX 1
 #endif
 
-#ifdef _WIN32
+#if QS_WASM
+/* WebAssembly builds have no sockets, TLS, dynamic loading, or FFI.
+ * The core language runs unmodified; the network/ffi builtins report a
+ * clear runtime error (see native.inc). The virtual filesystem supports
+ * the usual POSIX stat/dirent/unistd calls. */
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+typedef int qs_socket_t;
+#define QS_INVALID_SOCKET -1
+#define qs_close_socket(fd) ((void)(fd))
+#define qs_socket_errno() 0
+#define QS_WOULDBLOCK 0
+#define QS_IN_PROGRESS 0
+#define QS_TIMEDOUT 0
+typedef int qs_timeout_t;
+#elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif

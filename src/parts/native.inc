@@ -2,6 +2,19 @@
 #include <Python.h>
 #endif
 
+/* WebAssembly/WASI builds omit the network, TLS, websocket, and FFI
+ * subsystems. Those builtins still exist but report a clear runtime error. */
+#if defined(QS_WASM) && QS_WASM
+#define QS_NO_NETWORK_BUILTIN(parser, n) \
+    (parser_error((parser), n " is not available in the WebAssembly build"), 0)
+#define QS_HAVE_NETWORK 0
+/* WASI has no process spawning; any shell-out simply fails. */
+static int qs_wasm_system(const char *cmd) { (void)cmd; return -1; }
+#define system(cmd) qs_wasm_system(cmd)
+#else
+#define QS_HAVE_NETWORK 1
+#endif
+
 static uint64_t g_pcg_state = 0x853c49e6748fea9bULL;
 static uint64_t g_pcg_inc = 0xda3e39cb94b95bdbULL;
 
@@ -9,11 +22,15 @@ static int args_need(Parser *parser, CallArgList *args, size_t count, const char
 static int arg_string(Parser *parser, CallArgList *args, size_t index, const char *name, const char **out);
 static int arg_integer(Parser *parser, CallArgList *args, size_t index, const char *name, long *out);
 static int parse_http_url(const char *url, char **host, char **port, char **path, int *secure);
+#if QS_HAVE_NETWORK
 static qs_socket_t tcp_connect_socket(const char *host, const char *port);
 static char *tcp_exchange(const char *host, const char *port, const char *message);
+#endif
 static int sandbox_resolve(const char *path, char *out, size_t out_sz);
 static void sandbox_set_root(const char *root);
+#if QS_HAVE_NETWORK
 static Value make_response_map(int ok, long status, char *body, char *raw);
+#endif
 static char *trim_string_copy(const char *text);
 static Value split_string_value(const char *text, const char *separator);
 
@@ -21,10 +38,13 @@ static int values_equal(Value left, Value right);
 static int json_parse_value(const char *text, int *pos, Value *out, int *err);
 static char *json_stringify_value(Value value);
 
+#if QS_HAVE_NETWORK
 #ifdef _WIN32
 static char *https_request_winhttp(const char *method, const char *host, const char *port, const char *path, const char *body, long *status);
 #endif
+#endif
 
+#if QS_HAVE_NETWORK
 static long g_last_http_error = 0;
 
 static wchar_t *utf8_to_wide(const char *text) {
@@ -403,6 +423,23 @@ static int builtin_http_delete(Parser *parser, CallArgList *args, Value *out) {
 static int builtin_http_patch(Parser *parser, CallArgList *args, Value *out) {
     return builtin_http_request(parser, "PATCH", args, out);
 }
+#else  /* !QS_HAVE_NETWORK: WebAssembly stubs */
+static int builtin_http_get(Parser *parser, CallArgList *args, Value *out) {
+    (void)args; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_http_get");
+}
+static int builtin_http_post(Parser *parser, CallArgList *args, Value *out) {
+    (void)args; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_http_post");
+}
+static int builtin_http_put(Parser *parser, CallArgList *args, Value *out) {
+    (void)args; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_http_put");
+}
+static int builtin_http_delete(Parser *parser, CallArgList *args, Value *out) {
+    (void)args; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_http_delete");
+}
+static int builtin_http_patch(Parser *parser, CallArgList *args, Value *out) {
+    (void)args; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_http_patch");
+}
+#endif /* QS_HAVE_NETWORK */
 
 static int qs_path_is_abs(const char *p) {
 #ifdef _WIN32
@@ -454,7 +491,11 @@ static void qs_lexical_normalize(const char *input, char *out, size_t out_sz) {
 }
 
 static void sandbox_set_root(const char *root) {
-#ifdef _WIN32
+#if QS_WASM
+    char normalized[1024];
+    qs_lexical_normalize(root, normalized, sizeof(normalized));
+    snprintf(g_sandbox_path, sizeof(g_sandbox_path), "%s", normalized);
+#elif defined(_WIN32)
     char abs[2048];
     if (_fullpath(abs, root, sizeof(abs)) == NULL) {
         snprintf(abs, sizeof(abs), "%s", root);
@@ -662,6 +703,7 @@ static int parse_http_url(const char *url, char **host, char **port, char **path
     return (*host)[0] != '\0' && (*port)[0] != '\0';
 }
 
+#if QS_HAVE_NETWORK
 static int socket_startup(void) {
 #ifdef _WIN32
     static int started = 0;
@@ -797,6 +839,7 @@ static char *tcp_exchange(const char *host, const char *port, const char *messag
     response[count] = '\0';
     return response;
 }
+#endif /* QS_HAVE_NETWORK */
 
 static char *trim_string_copy(const char *text) {
     const char *start = text;
@@ -839,6 +882,7 @@ static void buf_append(char **buf, size_t *used, size_t *cap, const char *src, s
     (*buf)[*used] = '\0';
 }
 
+#if QS_HAVE_NETWORK
 #define QS_WS_MAX_CONNS 64
 typedef struct {
     qs_socket_t sock;
@@ -900,6 +944,7 @@ static int ws_tls_init_once(void) {
     }
     return 1;
 }
+#endif /* QS_HAVE_NETWORK */
 
 #if QS_HAVE_POSIX_REGEX
 static const char *regex_translate_flags(const char *pattern, int *cflags) {
@@ -1476,6 +1521,11 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
     }
 
+#if !QS_HAVE_NETWORK
+    if (strncmp(name, "ws_", 3) == 0) {
+        (void)args; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "websocket");
+    }
+#else
     if (strcmp(name, "ws_connect") == 0) {
         if (args->count != 1) { parser_error(parser, "ws_connect needs a URL"); return 0; }
         const char *url = NULL;
@@ -1756,6 +1806,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_null();
         return 1;
     }
+#endif /* QS_HAVE_NETWORK */
 #ifdef QS_PYTHON
 
     if (strcmp(name, "python_init") == 0) {
@@ -2064,6 +2115,9 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
     if (strcmp(name, "ffi_open") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_open needs a library path"); return 0; }
+#if !QS_HAVE_NETWORK
+        (void)out; return QS_NO_NETWORK_BUILTIN(parser, "ffi_open");
+#else
         const char *lib_path = NULL;
         if (!arg_string(parser, args, 0, name, &lib_path)) return 0;
 #ifdef _WIN32
@@ -2076,10 +2130,14 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         *out = make_float((double)(intptr_t)h);
 #endif
         return 1;
+#endif /* QS_HAVE_NETWORK */
     }
 
     if (strcmp(name, "ffi_symbol") == 0) {
         if (args->count != 2) { parser_error(parser, "ffi_symbol needs lib and name"); return 0; }
+#if !QS_HAVE_NETWORK
+        (void)out; return QS_NO_NETWORK_BUILTIN(parser, "ffi_symbol");
+#else
         intptr_t lib_handle = (intptr_t)args->items[0].value.as.floating;
         const char *func_name = NULL;
         if (!arg_string(parser, args, 1, name, &func_name)) return 0;
@@ -2091,12 +2149,13 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         if (!sym) { *out = make_null(); return 1; }
         *out = make_float((double)(intptr_t)sym);
         return 1;
+#endif /* QS_HAVE_NETWORK */
     }
 
     if (strcmp(name, "ffi_call_i") == 0) {
         if (args->count < 1) { parser_error(parser, "ffi_call_i needs func and args"); return 0; }
         intptr_t func_ptr = (intptr_t)args->items[0].value.as.floating;
-        typedef long (*ffi_func_i)();
+        typedef long (*ffi_func_i)(long, long, long, long, long, long);
         ffi_func_i fn = (ffi_func_i)func_ptr;
         long a0 = args->count > 1 ? args->items[1].value.as.integer : 0;
         long a1 = args->count > 2 ? args->items[2].value.as.integer : 0;
@@ -2112,7 +2171,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
     if (strcmp(name, "ffi_call_f") == 0) {
         if (args->count < 1) { parser_error(parser, "ffi_call_f needs func and args"); return 0; }
         intptr_t func_ptr = (intptr_t)args->items[0].value.as.floating;
-        typedef double (*ffi_func_f)();
+        typedef double (*ffi_func_f)(double, double, double, double);
         ffi_func_f fn = (ffi_func_f)func_ptr;
         double a0 = args->count > 1 ? value_to_double(args->items[1].value) : 0;
         double a1 = args->count > 2 ? value_to_double(args->items[2].value) : 0;
@@ -2136,6 +2195,9 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 
     if (strcmp(name, "ffi_close") == 0) {
         if (args->count != 1) { parser_error(parser, "ffi_close needs a library handle"); return 0; }
+#if !QS_HAVE_NETWORK
+        (void)out; return QS_NO_NETWORK_BUILTIN(parser, "ffi_close");
+#else
         intptr_t lib_handle = (intptr_t)args->items[0].value.as.floating;
 #ifdef _WIN32
         FreeLibrary((HMODULE)lib_handle);
@@ -2144,6 +2206,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
 #endif
         *out = make_null();
         return 1;
+#endif /* QS_HAVE_NETWORK */
     }
 
     if (strcmp(name, "ffi_alloc") == 0) {
@@ -2259,7 +2322,10 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             return 0;
         }
         if (ms > 0) {
-#ifdef _WIN32
+#if QS_WASM
+            /* WebAssembly is single-threaded; sleeping would just stall the
+             * caller, so sys_sleep is a no-op there. */
+#elif defined(_WIN32)
             Sleep((DWORD)ms);
 #else
             usleep((useconds_t)ms * 1000);
@@ -2391,7 +2457,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         if (!args_need(parser, args, 1, name)) return 0;
         char resolved[4096];
         if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
-#ifdef _WIN32
+#if defined(_WIN32) && !QS_WASM
         *out = make_bool(_mkdir(resolved) == 0);
 #else
         *out = make_bool(mkdir(resolved, 0755) == 0);
@@ -2418,7 +2484,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         if (!args_need(parser, args, 1, name)) return 0;
         char resolved[4096];
         if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
-#ifdef _WIN32
+#if defined(_WIN32) && !QS_WASM
         DWORD attrs = GetFileAttributesA(resolved);
         *out = make_bool(attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY));
 #else
@@ -2431,7 +2497,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         if (!args_need(parser, args, 1, name)) return 0;
         char resolved[4096];
         if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
-#ifdef _WIN32
+#if defined(_WIN32) && !QS_WASM
         WIN32_FIND_DATAA find_data;
         char pattern[8192];
         snprintf(pattern, sizeof(pattern), "%s\\*", resolved);
@@ -2472,11 +2538,16 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             !arg_string(parser, args, 2, name, &message)) {
             return 0;
         }
+#if QS_WASM
+        (void)host; (void)port_number; (void)message; (void)out; (void)name;
+        return QS_NO_NETWORK_BUILTIN(parser, "sys_tcp_send");
+#else
         char port[32];
         snprintf(port, sizeof(port), "%ld", port_number);
         char *response = tcp_exchange(host, port, message);
         *out = make_string_owned(response ? response : qs_strdup(""));
         return 1;
+#endif
     }
     if (strcmp(name, "sys_http_get") == 0) {
         return builtin_http_get(parser, args, out);
@@ -2536,14 +2607,21 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         if (!args_need(parser, args, 1, "sys_run")) return 0;
         const char *cmd = NULL;
         if (!arg_string(parser, args, 0, name, &cmd)) return 0;
+#if QS_WASM
+        (void)cmd; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_run");
+#else
         int rc = system(cmd);
         *out = make_integer((long long)rc);
         return 1;
+#endif
     }
     if (strcmp(name, "sys_capture") == 0) {
         if (!args_need(parser, args, 1, "sys_capture")) return 0;
         const char *cmd = NULL;
         if (!arg_string(parser, args, 0, name, &cmd)) return 0;
+#if QS_WASM
+        (void)cmd; (void)out; return QS_NO_NETWORK_BUILTIN(parser, "sys_capture");
+#else
         FILE *pipe = popen(cmd, "r");
         if (!pipe) {
             *out = make_null();
@@ -2570,6 +2648,7 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             buf[--len] = '\0';
         *out = make_string_owned(buf);
         return 1;
+#endif /* !QS_WASM */
     }
     if (strcmp(name, "sys_cwd") == 0) {
         if (g_sandbox_mode && g_sandbox_path[0] != '\0') {
@@ -2577,22 +2656,26 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             return 1;
         }
         char buf[4096];
-#ifdef _WIN32
+#if defined(_WIN32) && !QS_WASM
         if (_getcwd(buf, sizeof(buf))) {
-#else
-        if (getcwd(buf, sizeof(buf))) {
-#endif
             *out = make_string_owned(qs_strdup(buf));
         } else {
             *out = make_null();
         }
+#else
+        if (getcwd(buf, sizeof(buf))) {
+            *out = make_string_owned(qs_strdup(buf));
+        } else {
+            *out = make_null();
+        }
+#endif
         return 1;
     }
     if (strcmp(name, "sys_chdir") == 0) {
         if (!args_need(parser, args, 1, "sys_chdir")) return 0;
         char resolved[4096];
         if (!path_argument_resolved(parser, args, 0, name, resolved, sizeof(resolved))) return 0;
-#ifdef _WIN32
+#if defined(_WIN32) && !QS_WASM
         int ok = (_chdir(resolved) == 0);
 #else
         int ok = (chdir(resolved) == 0);

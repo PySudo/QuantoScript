@@ -22,6 +22,24 @@ static int qs_dir_exists(const char *path) {
     DWORD attr = GetFileAttributesA(path);
     return (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY));
 }
+#elif QS_WASM
+/* WebAssembly has no executable path; imports resolve relative to the
+ * preopened/working directory. The virtual filesystem still supports stat. */
+#include <sys/stat.h>
+static char *qs_get_exe_path(void) {
+    return NULL;
+}
+static char *qs_dirname_dup(const char *path) {
+    char *dup = qs_strdup(path);
+    char *last = strrchr(dup, '/');
+    if (last) *last = '\0';
+    else { free(dup); return qs_strdup("."); }
+    return dup;
+}
+static int qs_dir_exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
 #else
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -59,6 +77,21 @@ static int qs_dir_exists(const char *path) {
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 #endif
+
+/* Portable "can this file be opened for reading?" probe. Unlike access(2),
+ * this works on WASI, where access/stat are unavailable. */
+static int qs_file_readable(const char *path) {
+#if defined(_WIN32) && !QS_WASM
+    return _access(path, 4) == 0;
+#elif QS_WASM
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+#else
+    return access(path, R_OK) == 0;
+#endif
+}
 
 static char *g_quanto_home = NULL;
 
@@ -131,24 +164,24 @@ static char *qs_resolve_import(const char *path, const char *base_dir) {
     if (strncmp(path, "stdlib/", 7) == 0 || strncmp(path, "stdlib\\", 7) == 0) {
         const char *stdlib = get_stdlib_dir();
         snprintf(probe, sizeof(probe), "%s/%s", stdlib, path + 7);
-        if (access(probe, R_OK) == 0) return qs_strdup(probe);
+        if (qs_file_readable(probe)) return qs_strdup(probe);
     }
 
     if (base_dir && base_dir[0]) {
         snprintf(probe, sizeof(probe), "%s/%s", base_dir, path);
-        if (access(probe, R_OK) == 0) return qs_strdup(probe);
+        if (qs_file_readable(probe)) return qs_strdup(probe);
     }
 
     const char *stdlib = get_stdlib_dir();
     if (stdlib[0]) {
         snprintf(probe, sizeof(probe), "%s/%s", stdlib, path);
-        if (access(probe, R_OK) == 0) return qs_strdup(probe);
+        if (qs_file_readable(probe)) return qs_strdup(probe);
     }
 
     const char *home = get_quanto_home();
     if (home[0]) {
         snprintf(probe, sizeof(probe), "%s/%s", home, path);
-        if (access(probe, R_OK) == 0) return qs_strdup(probe);
+        if (qs_file_readable(probe)) return qs_strdup(probe);
     }
 
     return qs_strdup(path);

@@ -429,7 +429,9 @@ static int pkg_install(const char *url) {
         }
     }
 
-#ifdef _WIN32
+#if QS_WASM
+    /* Package installation shells out to git; not available under WASI. */
+#elif defined(_WIN32)
     _mkdir("packages");
 #else
     mkdir("packages", 0755);
@@ -437,7 +439,9 @@ static int pkg_install(const char *url) {
 
     char pkg_dir[1024];
     snprintf(pkg_dir, sizeof(pkg_dir), "packages/%s", repo_name);
-#ifdef _WIN32
+#if QS_WASM
+    if (0) {
+#elif defined(_WIN32)
     DWORD attrs = GetFileAttributesA(pkg_dir);
     if (attrs != INVALID_FILE_ATTRIBUTES) {
 #else
@@ -521,7 +525,9 @@ static int pkg_install_deps(const char *pkg_dir, int depth) {
             char pkg_check[1024];
             snprintf(pkg_check, sizeof(pkg_check), "packages/%s", dir_name);
 
-#ifdef _WIN32
+#if QS_WASM
+            if (1) {
+#elif defined(_WIN32)
             DWORD attrs = GetFileAttributesA(pkg_check);
             if (attrs == INVALID_FILE_ATTRIBUTES) {
 #else
@@ -540,6 +546,10 @@ static int pkg_install_deps(const char *pkg_dir, int depth) {
 }
 
 static QS_UNUSED_FN int pkg_list(void) {
+#if QS_WASM
+    printf("No packages installed\n");
+    return 0;
+#else
 #ifdef _WIN32
     DWORD attrs = GetFileAttributesA("packages");
     if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
@@ -578,12 +588,18 @@ static QS_UNUSED_FN int pkg_list(void) {
     }
 #endif
     return 0;
+#endif /* QS_WASM */
 }
 
 static QS_UNUSED_FN int pkg_remove(const char *name) {
     char pkg_dir[1024];
     snprintf(pkg_dir, sizeof(pkg_dir), "packages/%s", name);
 
+#if QS_WASM
+    (void)pkg_dir;
+    fprintf(stderr, "Error: package '%s' is not installed\n", name);
+    return 1;
+#else
 #ifdef _WIN32
     DWORD attrs = GetFileAttributesA(pkg_dir);
     if (attrs == INVALID_FILE_ATTRIBUTES) {
@@ -610,12 +626,16 @@ static QS_UNUSED_FN int pkg_remove(const char *name) {
 
     printf("Package '%s' removed\n", name);
     return 0;
+#endif /* QS_WASM */
 }
 
 static QS_UNUSED_FN int run_tests_in_dir(const char *dir) {
     int passed = 0;
     int failed = 0;
-#ifdef _WIN32
+#if QS_WASM
+    (void)dir;
+    return 0;
+#elif defined(_WIN32)
     WIN32_FIND_DATAA find_data;
     char pattern[1024];
     snprintf(pattern, sizeof(pattern), "%s\\*.qs", dir);
@@ -908,7 +928,9 @@ int main(int argc, char **argv) {
         return run_lsp_server();
     }
     if (cmd && strcmp(cmd, "init") == 0) {
-#ifdef _WIN32
+#if QS_WASM
+        /* No directory creation on WASI; files are written to the preopen. */
+#elif defined(_WIN32)
         _mkdir("test");
 #else
         mkdir("test", 0755);
