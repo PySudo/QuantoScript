@@ -806,6 +806,8 @@ static void qs_init_console(void) {
 #endif
 }
 
+static int run_lsp_server(void);
+
 int main(int argc, char **argv) {
     qs_init_console();
     if (argc == 1) {
@@ -834,6 +836,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  qs remove <package>   remove a package\n");
             fprintf(stderr, "  qs home               show QUANTO_HOME directory\n");
             fprintf(stderr, "  qs version            show version\n");
+            fprintf(stderr, "  qs lsp                run the language server (stdio)\n");
             fprintf(stderr, "\nflags:\n");
             fprintf(stderr, "  --dump-bytecode  print compiled bytecode to stderr\n");
             fprintf(stderr, "  --trace          print per-instruction VM trace\n");
@@ -900,6 +903,9 @@ int main(int argc, char **argv) {
     if (cmd && strcmp(cmd, "version") == 0) {
         printf("QuantoScript %s\n", QS_VERSION);
         return 0;
+    }
+    if (cmd && strcmp(cmd, "lsp") == 0) {
+        return run_lsp_server();
     }
     if (cmd && strcmp(cmd, "init") == 0) {
 #ifdef _WIN32
@@ -1080,6 +1086,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "  qs install <github-url>  install a package\n");
     fprintf(stderr, "  qs list               list installed packages\n");
     fprintf(stderr, "  qs remove <package>   remove a package\n");
+    fprintf(stderr, "  qs lsp                run the language server (stdio)\n");
     fprintf(stderr, "\nflags:\n");
     fprintf(stderr, "  --dump-bytecode    print compiled bytecode to stderr\n");
     fprintf(stderr, "  --trace            print per-instruction VM trace\n");

@@ -39,7 +39,13 @@ qs lint <file.qs>       # report common mistakes
 qs doc <file.qs>        # generate documentation from comments
 qs profile <file.qs>    # profile function calls
 qs test [directory]     # run *_test.qs files
+qs lsp                  # run the language server (JSON-RPC over stdio)
 ```
+
+`qs lsp` speaks the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
+over stdin/stdout. Editors (the bundled VS Code extension in `vscode/` does this
+automatically) launch it to get live diagnostics from `qs check` and keyword
+hover as you type.
 
 ---
 

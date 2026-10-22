@@ -21,3 +21,4 @@
 #include "parts/native_runtime.inc"
 #include "parts/native_compiler.inc"
 #include "parts/cli.inc"
+#include "parts/lsp.inc"
