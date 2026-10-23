@@ -65,7 +65,7 @@ function.
 
 ## Closures and currying
 
-> **Partly supported in v2.5.0.** A lambda captures the enclosing local variables
+> **Partly supported in v2.5.1.** A lambda captures the enclosing local variables
 > in the tree-walk interpreter and in native builds, so simple closures work
 > there. The bytecode VM does not capture outer locals and reports an unknown
 > variable. Nested/curried lambdas (`fn(x) -> fn(y) -> ...`) are not supported on

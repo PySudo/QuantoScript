@@ -4,6 +4,11 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-10-23
+
+### Features
+- `qs wasm bundle <file.qs> [-o <dir>]` creates a self-contained folder that runs with nothing but Node.js installed: it copies the JS glue and `.wasm` module, the source file, and a compiled `.qvm` bytecode file. The printed instructions run directly with `node` (no `qs` binary needed): `node <dir>/qs_node.js <dir>/<name>.qs` and `node <dir>/qs_node.js run <dir>/<name>.qvm`.
+
 ## [2.5.0] - 2026-10-23
 
 ### Features
