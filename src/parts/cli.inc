@@ -828,6 +828,85 @@ static void qs_init_console(void) {
 
 static int run_lsp_server(void);
 
+#if !QS_WASM
+/* Build a self-contained folder that runs a program under WebAssembly with
+ * nothing but Node.js installed. The folder contains the JS glue, the .wasm
+ * module, a copy of the source, and a compiled .qvm bytecode file. */
+static int run_wasm_bundle(const char *input, const char *outdir_arg) {
+    const char *loader = get_wasm_loader();
+    if (!loader[0]) {
+        fprintf(stderr, "Error: WebAssembly runtime not found.\n");
+        fprintf(stderr, "Build it with `make wasm` (requires the Emscripten SDK), or install a release.\n");
+        return 1;
+    }
+
+    char loader_dir[4096];
+    snprintf(loader_dir, sizeof(loader_dir), "%s", loader);
+    char *slash = strrchr(loader_dir, '/');
+#if defined(_WIN32)
+    char *bslash = strrchr(loader_dir, '\\');
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+#endif
+    if (slash) *slash = '\0';
+    else snprintf(loader_dir, sizeof(loader_dir), ".");
+
+    char js_src[8192], wasm_src[8192];
+    snprintf(js_src, sizeof(js_src), "%s/qs_node.js", loader_dir);
+    snprintf(wasm_src, sizeof(wasm_src), "%s/qs_node.wasm", loader_dir);
+
+    const char *fname = input;
+    for (const char *p = input; *p; p++) {
+        if (*p == '/' || *p == '\\') fname = p + 1;
+    }
+    char base[512];
+    snprintf(base, sizeof(base), "%s", fname);
+    size_t blen = strlen(base);
+    if (blen > 3 && strcmp(base + blen - 3, ".qs") == 0) base[blen - 3] = '\0';
+
+    char outdir[4096];
+    if (outdir_arg && outdir_arg[0]) snprintf(outdir, sizeof(outdir), "%s", outdir_arg);
+    else snprintf(outdir, sizeof(outdir), "%s_wasm", base);
+
+    if (!qs_mkdir_p(outdir)) {
+        fprintf(stderr, "Error: could not create directory %s\n", outdir);
+        return 1;
+    }
+
+    char js_dst[8192], wasm_dst[8192], qs_dst[8192], qvm_dst[8192];
+    snprintf(js_dst, sizeof(js_dst), "%s/qs_node.js", outdir);
+    snprintf(wasm_dst, sizeof(wasm_dst), "%s/qs_node.wasm", outdir);
+    snprintf(qs_dst, sizeof(qs_dst), "%s/%s.qs", outdir, base);
+    snprintf(qvm_dst, sizeof(qvm_dst), "%s/%s.qvm", outdir, base);
+
+    if (!qs_copy_file(js_src, js_dst) || !qs_copy_file(wasm_src, wasm_dst)) {
+        fprintf(stderr, "Error: could not copy the WebAssembly runtime into %s\n", outdir);
+        return 1;
+    }
+    if (!qs_copy_file(input, qs_dst)) {
+        fprintf(stderr, "Error: could not copy %s into %s\n", input, outdir);
+        return 1;
+    }
+
+    BytecodeProgram prog = {0};
+    int have_qvm = 0;
+    if (compile_file_to_bytecode(input, &prog)) {
+        have_qvm = qvm_serialize(&prog, g_compiled_funcs, g_compiled_func_count, input, qvm_dst);
+        bytecode_free(&prog);
+    }
+
+    printf("Bundled %s -> %s/\n", input, outdir);
+    printf("  qs_node.js\n  qs_node.wasm\n  %s.qs\n", base);
+    if (have_qvm) printf("  %s.qvm\n", base);
+    printf("\nRun with Node.js only:\n");
+    printf("  node %s/qs_node.js %s/%s.qs\n", outdir, outdir, base);
+    if (have_qvm) printf("  node %s/qs_node.js run %s/%s.qvm\n", outdir, outdir, base);
+    printf("\nOr through qs:\n");
+    printf("  qs wasm %s/%s.qs\n", outdir, base);
+    if (have_qvm) printf("  qs wasm run %s/%s.qvm\n", outdir, base);
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv) {
     qs_init_console();
     if (argc == 1) {
@@ -858,6 +937,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  qs version            show version\n");
             fprintf(stderr, "  qs lsp                run the language server (stdio)\n");
             fprintf(stderr, "  qs wasm <file.qs>     run under WebAssembly via Node\n");
+            fprintf(stderr, "  qs wasm bundle <file.qs> [-o <dir>]  make a self-contained runnable folder\n");
             fprintf(stderr, "\nflags:\n");
             fprintf(stderr, "  --dump-bytecode  print compiled bytecode to stderr\n");
             fprintf(stderr, "  --trace          print per-instruction VM trace\n");
@@ -926,6 +1006,27 @@ int main(int argc, char **argv) {
         fprintf(stderr, "wasm is not available inside the WebAssembly build itself\n");
         return 1;
 #else
+        int wasm_idx = -1;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "wasm") == 0) { wasm_idx = i; break; }
+        }
+        if (wasm_idx >= 0 && wasm_idx + 1 < argc && strcmp(argv[wasm_idx + 1], "bundle") == 0) {
+            const char *input = NULL;
+            const char *outdir = NULL;
+            for (int i = wasm_idx + 2; i < argc; i++) {
+                if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0) {
+                    if (i + 1 < argc) outdir = argv[++i];
+                } else if (argv[i][0] != '-') {
+                    if (!input) input = argv[i];
+                    else if (!outdir) outdir = argv[i];
+                }
+            }
+            if (!input) {
+                fprintf(stderr, "usage: qs wasm bundle <file.qs> [-o <dir>]\n");
+                return 1;
+            }
+            return run_wasm_bundle(input, outdir);
+        }
         const char *loader = get_wasm_loader();
         if (!loader[0]) {
             fprintf(stderr, "Error: WebAssembly runtime not found.\n");
@@ -942,10 +1043,6 @@ int main(int argc, char **argv) {
 #else
         snprintf(command, sizeof(command), "\"%s\" \"%s\"", node, loader);
 #endif
-        int wasm_idx = -1;
-        for (int i = 1; i < argc; i++) {
-            if (strcmp(argv[i], "wasm") == 0) { wasm_idx = i; break; }
-        }
         for (int i = wasm_idx + 1; i < argc; i++) {
             size_t used = strlen(command);
             if (used + strlen(argv[i]) + 4 >= sizeof(command)) break;
@@ -1149,6 +1246,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "  qs list               list installed packages\n");
     fprintf(stderr, "  qs remove <package>   remove a package\n");
     fprintf(stderr, "  qs lsp                run the language server (stdio)\n");
+    fprintf(stderr, "  qs wasm <file.qs>     run under WebAssembly via Node\n");
+    fprintf(stderr, "  qs wasm bundle <file.qs> [-o <dir>]  make a self-contained runnable folder\n");
     fprintf(stderr, "\nflags:\n");
     fprintf(stderr, "  --dump-bytecode    print compiled bytecode to stderr\n");
     fprintf(stderr, "  --trace            print per-instruction VM trace\n");

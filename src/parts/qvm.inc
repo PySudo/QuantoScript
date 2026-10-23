@@ -285,7 +285,8 @@ static QS_UNUSED_FN int qvm_serialize(BytecodeProgram *prog, CompiledFunc *funcs
         }
     }
 
-    int *param_indices_flat = calloc(func_count * 32, sizeof(int));
+    size_t nfunc = func_count > 0 ? (size_t)func_count : 0;
+    int *param_indices_flat = calloc(nfunc * 32, sizeof(int));
     for (int fi = 0; fi < func_count; fi++) {
         for (int pi = 0; pi < funcs[fi].param_count && pi < 32; pi++) {
             param_indices_flat[fi * 32 + pi] = QVM_NO_CONST;

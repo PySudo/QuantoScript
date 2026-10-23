@@ -93,6 +93,58 @@ static int qs_file_readable(const char *path) {
 #endif
 }
 
+#if !QS_WASM
+/* Create a directory and any missing parents. Returns 1 on success. */
+static int qs_mkdir_p(const char *path) {
+    if (!path || !path[0]) return 0;
+    char tmp[4096];
+    size_t len = strlen(path);
+    if (len >= sizeof(tmp)) return 0;
+    memcpy(tmp, path, len + 1);
+    while (len > 1 && (tmp[len - 1] == '/' || tmp[len - 1] == '\\')) tmp[--len] = '\0';
+    for (size_t i = 1; i < len; i++) {
+        if (tmp[i] == '/' || tmp[i] == '\\') {
+            char sep = tmp[i];
+            tmp[i] = '\0';
+            if (!qs_dir_exists(tmp)) {
+#if defined(_WIN32)
+                _mkdir(tmp);
+#else
+                mkdir(tmp, 0755);
+#endif
+            }
+            tmp[i] = sep;
+        }
+    }
+    if (!qs_dir_exists(tmp)) {
+#if defined(_WIN32)
+        _mkdir(tmp);
+#else
+        mkdir(tmp, 0755);
+#endif
+    }
+    return qs_dir_exists(tmp);
+}
+
+/* Byte-for-byte copy. Returns 1 on success. */
+static int qs_copy_file(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb");
+    if (!in) return 0;
+    FILE *out = fopen(dst, "wb");
+    if (!out) { fclose(in); return 0; }
+    char buf[65536];
+    size_t n;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) { ok = 0; break; }
+    }
+    if (ferror(in)) ok = 0;
+    fclose(in);
+    if (fclose(out) != 0) ok = 0;
+    return ok;
+}
+#endif
+
 static char *g_quanto_home = NULL;
 
 static const char *get_quanto_home(void) {
