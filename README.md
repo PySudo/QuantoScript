@@ -332,6 +332,25 @@ POSIX regex, and process spawning are unavailable in the sandbox and report a cl
 error. `make wasm-test` checks that every test and example matches the native
 binary. See [WebAssembly](docs/guide/21-webassembly.md) for details.
 
+To hand a program to someone who only has Node.js installed (no `qs` binary, no
+C compiler), bundle it into a self-contained folder:
+
+```bash
+qs wasm bundle program.qs                # creates ./program_wasm/
+qs wasm bundle program.qs -o dist/app    # custom output directory
+```
+
+The folder contains the JS glue, the `.wasm` module, the source, and a compiled
+`.qvm` bytecode file, and runs with **Node.js alone**:
+
+```bash
+node dist/app/qs_node.js dist/app/program.qs      # from source
+node dist/app/qs_node.js run dist/app/program.qvm # from bytecode (faster)
+```
+
+See [WebAssembly](docs/guide/21-webassembly.md) for a full real-world example
+(`examples/wasm_demo.qs`).
+
 
 ---
 
@@ -408,6 +427,7 @@ qs build <file.qs> [-o out.qvm]   compile to .qvm bytecode
 qs native <file.qs>         emit native C (a_native.c)
 qs compile <file.qs> [out]  compile to a native binary
 qs wasm <file.qs>           run under WebAssembly via Node
+qs wasm bundle <file.qs>     make a self-contained Node-runnable folder
 qs wasm vm <file.qs|.qvm>   run under WebAssembly with the bytecode VM
 qs init                     scaffold a new project
 qs check <file.qs>          validate syntax without executing

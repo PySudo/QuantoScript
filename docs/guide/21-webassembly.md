@@ -62,6 +62,70 @@ node build/qs_node.js build program.qs -o out.qvm
 node build/qs_node.js run out.qvm
 ```
 
+---
+
+## Self-contained bundles (`qs wasm bundle`)
+
+When you need to ship a program to someone who only has Node.js installed (no
+`qs` binary, no C compiler, no Emscripten), bundle it:
+
+```bash
+qs wasm bundle program.qs                # creates ./program_wasm/
+qs wasm bundle program.qs -o dist/app    # custom output directory
+```
+
+The folder contains everything needed to run the program under WebAssembly:
+
+```
+dist/app/
+  qs_node.js     # Node loader
+  qs_node.wasm   # WebAssembly module
+  program.qs     # source copy
+  program.qvm    # compiled bytecode (faster to start)
+```
+
+Run it with **Node.js alone** — no QuantoScript installation required:
+
+```bash
+node dist/app/qs_node.js dist/app/program.qs      # from source
+node dist/app/qs_node.js run dist/app/program.qvm  # from bytecode (faster)
+```
+
+Or, if `qs` is available, through the usual wrapper:
+
+```bash
+qs wasm dist/app/program.qs
+qs wasm run dist/app/program.qvm
+```
+
+### Real-world example
+
+`examples/wasm_demo.qs` is a small program that runs identically on the
+interpreter, the VM, native builds, and WebAssembly. Bundling it:
+
+```bash
+qs wasm bundle examples/wasm_demo.qs -o wasm_demo_bundle
+```
+
+produces:
+
+```
+Bundled examples/wasm_demo.qs -> wasm_demo_bundle/
+  qs_node.js
+  qs_node.wasm
+  wasm_demo.qs
+  wasm_demo.qvm
+
+Run with Node.js only:
+  node wasm_demo_bundle/qs_node.js wasm_demo_bundle/wasm_demo.qs
+  node wasm_demo_bundle/qs_node.js run wasm_demo_bundle/wasm_demo.qvm
+```
+
+Both invocations print the same output (fibonacci, maps with optional chaining,
+higher-order functions, and a caught exception), and the `.qvm` variant starts
+noticeably faster. The whole folder is about 530 KB and is the only thing you
+need to hand to a user who has Node.js installed.
+
 Any program that uses only the portable core of the language produces the exact
 same output as the native binary. See
 [`examples/wasm_demo.qs`](../../examples/wasm_demo.qs) for a small program that
