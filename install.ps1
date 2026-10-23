@@ -178,6 +178,19 @@ function Invoke-Install {
             Fail "installation completed but '$BinName version' failed to run"
         }
 
+        # Verify stdlib resolution works from a clean location.
+        $checkFile = Join-Path $tmp "stdlib_check.qs"
+        Set-Content -Path $checkFile -Value "from 'stdlib/math.qs' import min`nprint(min([3,1,2]))"
+        $savedHome = $env:QUANTO_HOME
+        $env:QUANTO_HOME = $dataDir
+        $checkOut = & $exe $checkFile 2>$null
+        if ($checkOut -eq "1") {
+            Ok "  stdlib import check passed"
+        } else {
+            Write-Host "  warning: stdlib import check failed; QUANTO_HOME may be misconfigured" -ForegroundColor DarkYellow
+        }
+        $env:QUANTO_HOME = $savedHome
+
         Write-Host ""
         Say "Next steps:"
         Write-Host "  Open a new terminal, then run:  qs --help"

@@ -187,9 +187,10 @@ do_install() {
     mkdir -p "$PREFIX/bin" "$PREFIX/$DATA_SUBDIR"
     command install -m 0755 "$pkgdir/bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME" 2>/dev/null \
         || { cp "$pkgdir/bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"; chmod 0755 "$PREFIX/bin/$BIN_NAME"; }
-    rm -rf "$PREFIX/$DATA_SUBDIR/stdlib" "$PREFIX/$DATA_SUBDIR/examples" "$PREFIX/$DATA_SUBDIR/wasm"
+    rm -rf "$PREFIX/$DATA_SUBDIR/stdlib" "$PREFIX/$DATA_SUBDIR/examples" "$PREFIX/$DATA_SUBDIR/src" "$PREFIX/$DATA_SUBDIR/wasm"
     [ -d "$pkgdir/stdlib" ]   && cp -R "$pkgdir/stdlib"   "$PREFIX/$DATA_SUBDIR/stdlib"
     [ -d "$pkgdir/examples" ] && cp -R "$pkgdir/examples" "$PREFIX/$DATA_SUBDIR/examples"
+    [ -d "$pkgdir/src" ]       && cp -R "$pkgdir/src"       "$PREFIX/$DATA_SUBDIR/src"
     [ -d "$pkgdir/wasm" ]     && cp -R "$pkgdir/wasm"     "$PREFIX/$DATA_SUBDIR/wasm"
     ok "  installed $BIN_NAME to $PREFIX/bin/$BIN_NAME"
 
@@ -202,6 +203,14 @@ do_install() {
         ok "${BOLD}$installed_ver installed successfully!${RESET}"
     else
         die "installation completed but '$BIN_NAME version' failed to run"
+    fi
+
+    # Verify stdlib resolution works from a clean location.
+    printf "from 'stdlib/math.qs' import min\nprint(min([3,1,2]))\n" > "$tmp/stdlib_check.qs"
+    if QUANTO_HOME="$PREFIX/$DATA_SUBDIR" "$PREFIX/bin/$BIN_NAME" "$tmp/stdlib_check.qs" 2>/dev/null | grep -q '^1$'; then
+        ok "  stdlib import check passed"
+    else
+        warn "  stdlib import check failed; QUANTO_HOME may be misconfigured"
     fi
 
     printf '\n'

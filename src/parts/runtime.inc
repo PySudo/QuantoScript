@@ -152,8 +152,12 @@ static const char *get_quanto_home(void) {
 
     const char *env_home = getenv("QUANTO_HOME");
     if (env_home && env_home[0]) {
-        g_quanto_home = qs_strdup(env_home);
-        return g_quanto_home;
+        char env_probe[4096];
+        snprintf(env_probe, sizeof(env_probe), "%s/stdlib", env_home);
+        if (qs_dir_exists(env_probe)) {
+            g_quanto_home = qs_strdup(env_home);
+            return g_quanto_home;
+        }
     }
 
     char *exe_path = qs_get_exe_path();
