@@ -3,7 +3,7 @@
 # 20. Style and Limits
 
 This final chapter collects the conventions that keep QuantoScript code readable
-and the things a v2.0.1 release does *not* do yet.
+and the things a v2.5.0 release does *not* do yet.
 
 ---
 
@@ -55,7 +55,7 @@ MAX_RETRIES = 3
 
 ## Known limitations
 
-These are tracked limitations of the v2.0.1 release:
+These are tracked limitations of the v2.5.0 release:
 
 - **Closures** capture outer locals in the tree-walk interpreter and in native
   builds, but not in the bytecode VM, which reports an unknown variable. See
@@ -74,7 +74,7 @@ These are tracked limitations of the v2.0.1 release:
 
 ## Not yet supported
 
-The following features are not implemented in v2.0.1:
+The following features are not implemented in v2.5.0:
 
 - `&&` and `||` (use `and` and `or`)
 - Closure capture in the bytecode VM

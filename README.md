@@ -2,12 +2,12 @@
 
 # QuantoScript
 
-**A small, readable scripting language with three execution engines.**
+**A small, readable scripting language with four execution engines.**
 
-Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter, a bytecode VM, and an optional native-C compiler.
+Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a tree-walk interpreter, a bytecode VM, an optional native-C compiler, and a WebAssembly target.
 
 [![CI](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml/badge.svg)](https://github.com/PySudo/QuantoScript/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-2.0.1-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.5.0-blue.svg)](CHANGELOG.md)
 [![language](https://img.shields.io/badge/written%20in-C99-00599C.svg)](src/quanto.c)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#building-from-source)
@@ -44,8 +44,9 @@ Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a t
 
 QuantoScript is a small, embeddable scripting language designed for readability and
 simplicity — think Python's clarity with a simpler, brace-based syntax. It ships with
-three execution engines: a tree-walk interpreter for fast iteration, a bytecode VM
-for performance, and an optional native-C compiler for compute-heavy numeric code.
+four execution engines: a tree-walk interpreter for fast iteration, a bytecode VM
+for performance, an optional native-C compiler for compute-heavy numeric code, and a
+WebAssembly target for running under Node.js or any WASM host.
 
 | | |
 |---|---|
@@ -92,7 +93,7 @@ Then open a new terminal and run `qs --help`.
 
 ```bash
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 2.0.1
+curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh | sh -s -- --version 2.5.0
 
 # Custom install prefix (default: ~/.quanto)
 QUANTO_INSTALL="$HOME/.local" curl -fsSL .../install.sh | sh
@@ -108,7 +109,7 @@ curl -fsSL https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.sh
 
 ```powershell
 # Install a specific version
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 2.0.1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Version 2.5.0
 
 # Uninstall
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/PySudo/QuantoScript/main/install.ps1))) -Uninstall
@@ -551,7 +552,7 @@ build/              Build output (gitignored)
 
 ## Known Limitations
 
-This is a **v2.0.1** release. The following are known and tracked:
+This is a **v2.5.0** release. The following are known and tracked:
 
 - **Closures** that capture an enclosing function's local variables work in the
   tree-walk interpreter and in native builds, but not in the bytecode VM, which
@@ -571,8 +572,8 @@ This is a **v2.0.1** release. The following are known and tracked:
 
 | Version | Focus |
 |---------|-------|
-| **v1.2.0** | Working closures, richer string/map methods |
-| **v2.0.0** | Async/await, broader native-compiler coverage |
+| **v2.5.0** | WebAssembly target (`qs wasm`) and a shipped runtime |
+| **Planned** | Closures in the bytecode VM, working async/await |
 
 ---
 

@@ -4,17 +4,38 @@ All notable changes to QuantoScript will be documented in this file.
 
 ## [Unreleased]
 
-### Features
-- New operators across every engine (interpreter, `qs vm`, `qs build`/qvm, and native `qs native`): `??` (null coalescing) returns its left operand unless it is `null`, in which case it returns the right operand; `?.` and `?[` (optional chaining) return `null` instead of raising when the receiver is `null` or the field, method, or key is missing, so `user?.name`, `user?.greet()`, `user?["id"]`, and `data?.missing` (on a map) are safe and chains stop at the first missing or null link.
-- `qs lsp` starts a Language Server Protocol server on stdio (JSON-RPC 2.0 with `Content-Length` framing). It supports the initialize/shutdown handshake, full document sync (`didOpen`/`didChange`/`didSave`/`didClose`), diagnostics via `textDocument/publishDiagnostics` (reusing `qs check`), and keyword `textDocument/hover`. The bundled VS Code extension in `vscode/` now connects to it for live diagnostics and hover.
-- Maps now use a hash index for key lookup instead of a linear scan, in every engine (interpreter, `qs vm`, `qs build`, and native `qs native`). `has`, `get`, `get(key, default)`, `keys`, `items`, and `remove` keep insertion order for iteration, but `has`/`get`/`remove` are constant-time on average. Existing programs and outputs are unchanged.
-- `qs native` now recognizes the common built-in map and string methods (`has`, `get`, `keys`, `values`, `items`, `split`, `join`, `contains`, `indexOf`, `substring`, `startsWith`, `endsWith`, `trimStart`, `trimEnd`, `title`, `replace`, `repeat`, `reverse`) and emits direct calls to specialized C helpers instead of the generic `qs_method_call` dispatcher. Each call keeps a runtime type guard and falls back to the generic path when the receiver is not the expected type, so behaviour is unchanged. `len(...)` is also inlined for strings, lists, and maps.
+## [2.5.0] - 2026-10-23
 
 ### Features
-- WebAssembly build via Emscripten. `make wasm` compiles the full interpreter, bytecode VM, and native compiler to a `.wasm` module (`build/qs_node.js` + `build/qs_node.wasm`). A prebuilt runtime ships in `runtime/wasm/` and is installed alongside the binary, so users run programs without building anything: `qs wasm program.qs`, `qs wasm vm program.qs`, `qs wasm build program.qs -o out.qvm`, `qs wasm run out.qvm`. The `qs wasm` command finds the installed runtime and drives Node (override the interpreter with `QS_NODE`). Under Node the virtual filesystem is backed by NODERAWFS, so file access works. The core language is unchanged; only the platform layer differs. `make wasm-test` runs every test and example through both the native binary and the WASM build and reports parity. On the WebAssembly target the platform-dependent features are unavailable and report a clear runtime error: live networking (`http`, `websocket`), FFI (`ffi_*`), POSIX regex, and process spawning (`sys_run`, `sys_capture`), so a handful of network/regex tests differ by design.
+- The WebAssembly runtime now ships with QuantoScript and is installed alongside the binary (`<home>/wasm/`), so users run programs without building anything. `qs wasm program.qs`, `qs wasm vm program.qs`, `qs wasm build program.qs -o out.qvm`, and `qs wasm run out.qvm` locate the installed runtime and drive Node (override the interpreter with `QS_NODE`). The build is cross-platform: `make wasm`, `make wasm-debug`, and `make wasm-test` replace the old `build_wasm.ps1`, and `make wasm-test` compares every test and example against the native binary. The installers (`install.sh`, `install.ps1`) and the release workflow package the runtime.
+
+## [2.4.0] - 2026-10-22
+
+### Features
+- WebAssembly build via Emscripten: the interpreter, bytecode VM, and native compiler compile to a `.wasm` module (`build/qs_node.js` + `build/qs_node.wasm`). Under Node the virtual filesystem is backed by NODERAWFS, so real files can be read and written. The core language is unchanged; only the platform layer differs. On the WebAssembly target live networking (`http`, `websocket`), FFI (`ffi_*`), POSIX regex, and process spawning (`sys_run`, `sys_capture`) are unavailable and report a clear runtime error, so a handful of network/regex tests differ by design.
+
+## [2.3.0] - 2026-10-22
+
+### Features
+- `qs lsp` starts a Language Server Protocol server on stdio (JSON-RPC 2.0 with `Content-Length` framing). It supports the initialize/shutdown handshake, full document sync (`didOpen`/`didChange`/`didSave`/`didClose`), diagnostics via `textDocument/publishDiagnostics` (reusing `qs check`), and keyword `textDocument/hover`. The bundled VS Code extension in `vscode/` now connects to it for live diagnostics and hover.
+
+## [2.2.0] - 2026-10-22
+
+### Features
+- New operators across every engine (interpreter, `qs vm`, `qs build`/qvm, and native `qs native`): `??` (null coalescing) returns its left operand unless it is `null`, in which case it returns the right operand; `?.` and `?[` (optional chaining) return `null` instead of raising when the receiver is `null` or the field, method, or key is missing, so `user?.name`, `user?.greet()`, `user?["id"]`, and `data?.missing` (on a map) are safe and chains stop at the first missing or null link.
+- Error messages and stack traces are now identical across all engines (interpreter, `qs vm`, `qs build`/qvm, and native `qs native`).
 
 ### Bug Fixes
 - `len(map)` now works on the interpreter; it previously failed with `len needs a string or list`. All three engines accept maps and report `len needs a string, list, or map` for other types.
+
+## [2.1.1] - 2026-10-21
+
+### Features
+- Maps now use a hash index for key lookup instead of a linear scan, in every engine (interpreter, `qs vm`, `qs build`, and native `qs native`). `has`, `get`, `get(key, default)`, `keys`, `items`, and `remove` keep insertion order for iteration, but `has`/`get`/`remove` are constant-time on average. Existing programs and outputs are unchanged.
+- `qs native` now recognizes the common built-in map and string methods (`has`, `get`, `keys`, `values`, `items`, `split`, `join`, `contains`, `indexOf`, `substring`, `startsWith`, `endsWith`, `trimStart`, `trimEnd`, `title`, `replace`, `repeat`, `reverse`) and emits direct calls to specialized C helpers instead of the generic `qs_method_call` dispatcher. Each call keeps a runtime type guard and falls back to the generic path when the receiver is not the expected type, so behaviour is unchanged. `len(...)` is also inlined for strings, lists, and maps.
+
+### Bug Fixes
+- Fixed index assignment, `repeat` body parsing, and native parameter cloning.
 
 ### Performance
 - New `map` and `strm` benchmarks in the benchmark suite.
