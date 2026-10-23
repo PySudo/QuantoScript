@@ -1,4 +1,4 @@
-[« Previous: Imports](13-imports.md) · [Guide Index](README.md) · [Next: Built-in Functions »](15-built-in-functions.md)
+[Â« Previous: Imports](13-imports.md) Â· [Guide Index](README.md) Â· [Next: Built-in Functions Â»](15-built-in-functions.md)
 
 # 14. Standard Library
 
@@ -38,6 +38,7 @@ from "stdlib/fs.qs" import *
 | [`url.qs`](#url) | URL encoding helpers |
 | [`net.qs`](#net) | Raw TCP networking |
 | [`websocket.qs`](#websocket) | WebSocket client |
+| [`webserver.qs`](#webserver) | Minimal HTTP server |
 | [`async.qs`](#async) | Cooperative tasks *(experimental)* |
 
 ---
@@ -147,8 +148,8 @@ Encode and decode JSON.
 
 | Function | Description |
 |----------|-------------|
-| `parse(text)` | JSON string → list/map/value |
-| `stringify(value)` | value → JSON string |
+| `parse(text)` | JSON string â†’ list/map/value |
+| `stringify(value)` | value â†’ JSON string |
 
 ```qscript
 from "stdlib/json.qs" import parse, stringify
@@ -231,7 +232,7 @@ produces the same sequence across platforms.
 | `sample(list, k)` | `k` unique random elements |
 
 > The built-ins `random()` (float in `[0, 1)`) and `random_seed(value)` are also
-> available without an import — see
+> available without an import â€” see
 > [Built-in Functions](15-built-in-functions.md).
 
 ```qscript
@@ -289,7 +290,7 @@ JSON).
 Responses are maps with `ok`, `status`, `error`, and `body` keys. When a
 request cannot be completed (DNS failure, timeout, TLS error) `ok` is `false`,
 `status` is `0` and `body` is empty; `error` then carries the underlying
-transport error code — check `len(response["body"])` before parsing.
+transport error code â€” check `len(response["body"])` before parsing.
 
 ```qscript
 from "stdlib/http.qs" import get, post
@@ -317,13 +318,13 @@ Percent-encoding helpers for building URLs and query strings.
 | `url_decode(text)` | reverse of `url_encode` (`+` becomes a space) |
 
 `url_encode` escapes everything except the unreserved characters
-`A–Z`, `a–z`, `0–9`, `-`, `_`, `.`, and `~`, so the result is always safe to
+`Aâ€“Z`, `aâ€“z`, `0â€“9`, `-`, `_`, `.`, and `~`, so the result is always safe to
 place in a query parameter.
 
 ```qscript
 from "stdlib/url.qs" import url_encode, url_decode
 
-print(url_encode("654صثگ \\/,m.:;"))   # 654%D8%B5%D8%AB%DA%AF%20%5C%2F%2Cm.%3A%3B
+print(url_encode("654ØµØ«Ú¯ \\/,m.:;"))   # 654%D8%B5%D8%AB%DA%AF%20%5C%2F%2Cm.%3A%3B
 print(url_decode("a%20b%26c%3Dd"))     # a b&c=d
 ```
 
@@ -395,9 +396,30 @@ if ws == null {
 
 ---
 
+## webserver
+
+Minimal HTTP server.
+
+| Function | Description |
+|----------|-------------|
+| `response(status, body)` | build a response map |
+| `route(path, response)` | register a route |
+| `serve(host, port)` | start serving (blocks) |
+
+```qscript
+from "stdlib/webserver.qs" import route, response, serve
+
+route("/", response(200, "<h1>Hello from QS!</h1>"))
+route("/about", response(200, "<h1>About QuantoScript</h1>"))
+
+serve("0.0.0.0", 3000)
+```
+
+---
+
 ## async
 
-Cooperative task helpers. **Experimental** — single-task use is reliable, but the
+Cooperative task helpers. **Experimental** â€” single-task use is reliable, but the
 queue can misbehave with multiple tasks. See
 [Style and Limits](20-style-and-limits.md#known-limitations).
 
@@ -427,4 +449,4 @@ an import.
 
 ---
 
-[« Previous: Imports](13-imports.md) · [Guide Index](README.md) · [Next: Built-in Functions »](15-built-in-functions.md)
+[Â« Previous: Imports](13-imports.md) Â· [Guide Index](README.md) Â· [Next: Built-in Functions Â»](15-built-in-functions.md)

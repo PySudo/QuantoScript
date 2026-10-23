@@ -15,6 +15,14 @@ static int qs_wasm_system(const char *cmd) { (void)cmd; return -1; }
 #define QS_HAVE_NETWORK 1
 #endif
 
+#if QS_HAVE_NETWORK
+#define QS_HTTP_MAX_ROUTES 128
+static char *g_http_route_paths[QS_HTTP_MAX_ROUTES];
+static int g_http_route_statuses[QS_HTTP_MAX_ROUTES];
+static char *g_http_route_bodies[QS_HTTP_MAX_ROUTES];
+static int g_http_route_count = 0;
+#endif
+
 static uint64_t g_pcg_state = 0x853c49e6748fea9bULL;
 static uint64_t g_pcg_inc = 0xda3e39cb94b95bdbULL;
 
@@ -591,7 +599,7 @@ static int url_char_is_safe(unsigned char c) {
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) return 1;
     switch (c) {
         case '-': case '.': case '_': case '~':
-        case '!': case '$': case '&': case '\'': case '(': case ')':
+        case '!': case '$': case '&': case '\'\0': case '(': case ')':
         case '*': case '+': case ',': case ';': case '=':
         case ':': case '@': case '/': case '?': case '%':
             return 1;
@@ -2549,6 +2557,107 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         return 1;
 #endif
     }
+    if (strcmp(name, "sys_http_route") == 0) {
+        const char *path = NULL;
+        const char *body = NULL;
+        long status = 200;
+        if (!args_need(parser, args, 3, name) ||
+            !arg_string(parser, args, 0, name, &path) ||
+            !arg_integer(parser, args, 1, name, &status) ||
+            !arg_string(parser, args, 2, name, &body)) {
+            return 0;
+        }
+#if QS_WASM
+        (void)path; (void)status; (void)body; (void)out; (void)name;
+        return QS_NO_NETWORK_BUILTIN(parser, "sys_http_route");
+#else
+        if (g_http_route_count < QS_HTTP_MAX_ROUTES) {
+            g_http_route_paths[g_http_route_count] = qs_strdup(path);
+            g_http_route_statuses[g_http_route_count] = (int)status;
+            g_http_route_bodies[g_http_route_count] = qs_strdup(body);
+            g_http_route_count++;
+        }
+        *out = make_integer(1);
+        return 1;
+#endif
+    }
+    if (strcmp(name, "sys_http_serve") == 0) {
+        const char *host = NULL;
+        long port_number = 0;
+        if (!args_need(parser, args, 2, name) ||
+            !arg_string(parser, args, 0, name, &host) ||
+            !arg_integer(parser, args, 1, name, &port_number)) {
+            return 0;
+        }
+#if QS_WASM
+        (void)host; (void)port_number; (void)out; (void)name;
+        return QS_NO_NETWORK_BUILTIN(parser, "sys_http_serve");
+#else
+        if (!socket_startup()) { parser_error(parser, "network unavailable"); return 0; }
+        qs_socket_t listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listener == QS_INVALID_SOCKET) { parser_error(parser, "cannot create socket"); return 0; }
+        int opt = 1;
+        setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt));
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons((unsigned short)port_number);
+        if (strcmp(host, "0.0.0.0") == 0 || host[0] == ' ') {
+            addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        } else {
+            inet_pton(AF_INET, host, &addr.sin_addr);
+        }
+        if (bind(listener, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+            qs_close_socket(listener);
+            parser_error(parser, "cannot bind port");
+            return 0;
+        }
+        if (listen(listener, 16) == -1) {
+            qs_close_socket(listener);
+            parser_error(parser, "cannot listen");
+            return 0;
+        }
+        for (;;) {
+            qs_socket_t client = accept(listener, NULL, NULL);
+            if (client == QS_INVALID_SOCKET) continue;
+            char buf[8192];
+            int n = recv(client, buf, sizeof(buf) - 1, 0);
+            if (n <= 0) { qs_close_socket(client); continue; }
+            buf[n] = ' ';
+            char path[256];
+            path[0] = ' ';
+            char *sp1 = strchr(buf, ' ');
+            if (sp1) {
+                char *sp2 = strchr(sp1 + 1, ' ');
+                if (sp2) {
+                    size_t plen = (size_t)(sp2 - (sp1 + 1));
+                    if (plen >= sizeof(path)) plen = sizeof(path) - 1;
+                    memcpy(path, sp1 + 1, plen);
+                    path[plen] = '\0';
+                }
+            }
+            int status = 404;
+            const char *body = "Not Found";
+            for (int i = 0; i < g_http_route_count; i++) {
+                if (strcmp(g_http_route_paths[i], path) == 0) {
+                    status = g_http_route_statuses[i];
+                    body = g_http_route_bodies[i];
+                    break;
+                }
+            }
+            char header[512];
+            snprintf(header, sizeof(header),
+                "HTTP/1.1 %d OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n",
+                status, (unsigned long)strlen(body));
+            send(client, header, (int)strlen(header), 0);
+            send(client, body, (int)strlen(body), 0);
+            qs_close_socket(client);
+        }
+        qs_close_socket(listener);
+        *out = make_null();
+        return 1;
+#endif
+    }
     if (strcmp(name, "sys_http_get") == 0) {
         return builtin_http_get(parser, args, out);
     }
@@ -2745,6 +2854,7 @@ static int is_builtin_function(const char *name) {
            strcmp(name, "sys_rename") == 0 || strcmp(name, "sys_is_dir") == 0 ||
            strcmp(name, "sys_list_dir") == 0 ||
            strcmp(name, "sys_tcp_send") == 0 || strcmp(name, "sys_http_get") == 0 ||
+           strcmp(name, "sys_http_route") == 0 || strcmp(name, "sys_http_serve") == 0 ||
            strcmp(name, "sys_http_post") == 0 || strcmp(name, "sys_http_put") == 0 ||
            strcmp(name, "sys_http_delete") == 0 || strcmp(name, "sys_http_patch") == 0 ||
            strcmp(name, "sys_json_parse") == 0 || strcmp(name, "sys_json_stringify") == 0 ||
