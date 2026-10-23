@@ -1,12 +1,45 @@
 #Requires -Version 5.1
-# Compare native qs.exe output against the Emscripten WASM build (node) for
+# Compare the native qs binary against the Emscripten WASM build (node) for
 # every tests/*.qs and examples/*.qs file, comparing stdout and stderr
 # separately (interleaving of the two is not deterministic).
+#
+# Environment overrides:
+#   QS_NATIVE   path to the native binary (default: build/qs or build/qs.exe)
+#   QS_NODE     path to node (default: node on PATH, else emsdk's node)
+#   QS_WASM_JS  path to the wasm loader (default: build/qs_node.js, else runtime/wasm/qs_node.js)
 $ErrorActionPreference = "SilentlyContinue"
 $root = Split-Path $PSScriptRoot -Parent
-$qs = Join-Path $root "build\qs.exe"
-$node = "C:\Users\Lpmarket\emsdk\node\24.19.0_64bit\node.exe"
-$js = Join-Path $root "build\qs_node.js"
+
+function Resolve-Native {
+    if ($env:QS_NATIVE) { return $env:QS_NATIVE }
+    foreach ($n in @("build/qs.exe", "build/qs")) {
+        $p = Join-Path $root $n
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return (Join-Path $root "build/qs.exe")
+}
+
+function Resolve-Node {
+    if ($env:QS_NODE) { return $env:QS_NODE }
+    $cmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $cand = "C:\Users\Lpmarket\emsdk\node\24.19.0_64bit\node.exe"
+    if (Test-Path -LiteralPath $cand) { return $cand }
+    return "node"
+}
+
+function Resolve-WasmJs {
+    if ($env:QS_WASM_JS) { return $env:QS_WASM_JS }
+    foreach ($n in @("build/qs_node.js", "runtime/wasm/qs_node.js")) {
+        $p = Join-Path $root $n
+        if (Test-Path -LiteralPath $p) { return $p }
+    }
+    return (Join-Path $root "build/qs_node.js")
+}
+
+$qs = Resolve-Native
+$node = Resolve-Node
+$js = Resolve-WasmJs
 
 function RunCapture([string]$exe, [string]$arg, [string]$tag) {
     $outF = Join-Path $env:TEMP "wc_${tag}_out.txt"

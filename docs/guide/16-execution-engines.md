@@ -14,6 +14,7 @@ is the same in every case; only the machinery that executes it changes.
 | Tree-walk interpreter | `qs program.qs` | Development, debugging, quick scripts |
 | Bytecode VM | `qs vm program.qs` | Faster runtime performance |
 | Native C compiler | `qs compile program.qs` | Compute-heavy numeric code |
+| WebAssembly | `node build/qs_node.js program.qs` | Running in Node.js / a WASM host |
 
 ```bash
 qs program.qs          # interpreter (the default)
@@ -78,6 +79,8 @@ and compile ahead of time — see
 - **Shipping a script and want speed?** Use the VM (`qs vm file.qs`), or compile
   to `.qvm`.
 - **Number crunching in a tight loop?** Try the native compiler.
+- **Running in Node.js or another WASM host?** Use the WebAssembly build — see
+  [WebAssembly](21-webassembly.md).
 
 The interpreter is the safest choice when a feature matters: it is the reference
 for every example in this guide. Very new or advanced features may not yet behave

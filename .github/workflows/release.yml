@@ -150,6 +150,9 @@ jobs:
           cp -R stdlib   "dist/$PKG/stdlib"
           cp -R examples "dist/$PKG/examples"
           cp -R src      "dist/$PKG/src"
+          # Prebuilt WebAssembly runtime (platform-independent, so identical
+          # across legs); consumed by `qs wasm`.
+          cp -R runtime/wasm "dist/$PKG/wasm"
           cp LICENSE README.md "dist/$PKG/"
 
           # Create archive

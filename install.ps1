@@ -141,12 +141,12 @@ function Invoke-Install {
         $srcBin = Join-Path $pkgdir.FullName "bin\$BinName"
         if (-not (Test-Path $srcBin)) { Fail "binary not found in archive" }
 
-        # Layout: InstallDir\bin\qs.exe  and  InstallDir\share\quantoscript\{stdlib,examples,src}
+        # Layout: InstallDir\bin\qs.exe  and  InstallDir\share\quantoscript\{stdlib,examples,src,wasm}
         $binDir  = Join-Path $InstallDir "bin"
         $dataDir = Join-Path $InstallDir $DataSubdir
         New-Item -ItemType Directory -Force -Path $binDir, $dataDir | Out-Null
         Copy-Item $srcBin (Join-Path $binDir $BinName) -Force
-        foreach ($sub in "stdlib", "examples", "src") {
+        foreach ($sub in "stdlib", "examples", "src", "wasm") {
             $s = Join-Path $pkgdir.FullName $sub
             $d = Join-Path $dataDir $sub
             if (Test-Path $d) { Remove-Item -Recurse -Force $d }

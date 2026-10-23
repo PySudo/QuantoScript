@@ -183,13 +183,14 @@ do_install() {
     [ -d "$pkgdir" ] || die "unexpected archive layout"
     [ -f "$pkgdir/bin/$BIN_NAME" ] || die "binary not found in archive"
 
-    # Install into: PREFIX/bin/qs and PREFIX/share/quantoscript/{stdlib,examples}
+    # Install into: PREFIX/bin/qs and PREFIX/share/quantoscript/{stdlib,examples,wasm}
     mkdir -p "$PREFIX/bin" "$PREFIX/$DATA_SUBDIR"
     command install -m 0755 "$pkgdir/bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME" 2>/dev/null \
         || { cp "$pkgdir/bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"; chmod 0755 "$PREFIX/bin/$BIN_NAME"; }
-    rm -rf "$PREFIX/$DATA_SUBDIR/stdlib" "$PREFIX/$DATA_SUBDIR/examples"
+    rm -rf "$PREFIX/$DATA_SUBDIR/stdlib" "$PREFIX/$DATA_SUBDIR/examples" "$PREFIX/$DATA_SUBDIR/wasm"
     [ -d "$pkgdir/stdlib" ]   && cp -R "$pkgdir/stdlib"   "$PREFIX/$DATA_SUBDIR/stdlib"
     [ -d "$pkgdir/examples" ] && cp -R "$pkgdir/examples" "$PREFIX/$DATA_SUBDIR/examples"
+    [ -d "$pkgdir/wasm" ]     && cp -R "$pkgdir/wasm"     "$PREFIX/$DATA_SUBDIR/wasm"
     ok "  installed $BIN_NAME to $PREFIX/bin/$BIN_NAME"
 
     update_profile

@@ -153,6 +153,97 @@ static const char *get_stdlib_dir(void) {
     return buf;
 }
 
+/* Locate the prebuilt WebAssembly loader (qs_node.js). It ships under
+ * <home>/wasm/ in an installed tree and under build/ or runtime/wasm/ in a
+ * source checkout. Returns a static buffer, or an empty string if not found. */
+static const char *get_wasm_loader(void) {
+    static char buf[4096];
+    const char *home = get_quanto_home();
+    if (home[0]) {
+        snprintf(buf, sizeof(buf), "%s/wasm/qs_node.js", home);
+        if (qs_file_readable(buf)) return buf;
+    }
+
+    char *exe_path = qs_get_exe_path();
+    if (exe_path) {
+        char *exe_dir = qs_dirname_dup(exe_path);
+        free(exe_path);
+        snprintf(buf, sizeof(buf), "%s/wasm/qs_node.js", exe_dir);
+        if (qs_file_readable(buf)) { free(exe_dir); return buf; }
+        snprintf(buf, sizeof(buf), "%s/qs_node.js", exe_dir);
+        if (qs_file_readable(buf)) { free(exe_dir); return buf; }
+        /* Installed layout: <prefix>/bin/qs with <prefix>/share/quantoscript/wasm/. */
+        snprintf(buf, sizeof(buf), "%s/../share/quantoscript/wasm/qs_node.js", exe_dir);
+        if (qs_file_readable(buf)) { free(exe_dir); return buf; }
+        free(exe_dir);
+    }
+
+    const char *candidates[] = {
+        "runtime/wasm/qs_node.js",
+        "build/qs_node.js",
+        "wasm/qs_node.js",
+        NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        if (qs_file_readable(candidates[i])) {
+            snprintf(buf, sizeof(buf), "%s", candidates[i]);
+            return buf;
+        }
+    }
+
+    buf[0] = '\0';
+    return buf;
+}
+
+/* Locate a Node.js executable for `qs wasm`. Honours QS_NODE, then searches
+ * PATH (via `where`/`command -v` indirectly: the shell that runs the program
+ * resolves bare "node"), and finally a few well-known install locations.
+ * Returns a static buffer, or "node" as a last resort. */
+static const char *get_node_exe(void) {
+    static char buf[4096];
+    const char *env_node = getenv("QS_NODE");
+    if (env_node && env_node[0]) {
+        snprintf(buf, sizeof(buf), "%s", env_node);
+        return buf;
+    }
+
+#if defined(_WIN32) && !QS_WASM
+    const char *home = getenv("USERPROFILE");
+    const char *pf = getenv("ProgramFiles");
+    const char *localapp = getenv("LOCALAPPDATA");
+    const char *candidates[8];
+    int n = 0;
+    static char c0[2048], c1[2048], c2[2048], c3[2048];
+    if (pf) { snprintf(c0, sizeof(c0), "%s\\nodejs\\node.exe", pf); candidates[n++] = c0; }
+    if (localapp) { snprintf(c1, sizeof(c1), "%s\\Programs\\nodejs\\node.exe", localapp); candidates[n++] = c1; }
+    if (home) { snprintf(c2, sizeof(c2), "%s\\scoop\\apps\\nodejs\\current\\node.exe", home); candidates[n++] = c2; }
+    if (pf) { snprintf(c3, sizeof(c3), "%s\\nodejs\\node.exe", pf); candidates[n++] = c3; }
+    candidates[n] = NULL;
+    for (int i = 0; candidates[i]; i++) {
+        if (qs_file_readable(candidates[i])) {
+            snprintf(buf, sizeof(buf), "%s", candidates[i]);
+            return buf;
+        }
+    }
+#else
+    const char *candidates[] = {
+        "/usr/local/bin/node",
+        "/usr/bin/node",
+        "/opt/homebrew/bin/node",
+        NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        if (qs_file_readable(candidates[i])) {
+            snprintf(buf, sizeof(buf), "%s", candidates[i]);
+            return buf;
+        }
+    }
+#endif
+
+    snprintf(buf, sizeof(buf), "node");
+    return buf;
+}
+
 static char *qs_resolve_import(const char *path, const char *base_dir) {
     if (path[0] == '/' || path[0] == '\\' ||
         (path[0] == '.' && path[1] && (path[1] == '/' || path[1] == '\\'))) {

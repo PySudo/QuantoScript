@@ -43,6 +43,7 @@ need.
 | 18 | [Command-Line Interface](18-command-line.md) | Every `qs` command and flag |
 | 19 | [Package Manager](19-package-manager.md) | Installing, listing, and removing packages |
 | 20 | [Style and Limits](20-style-and-limits.md) | Conventions, known limitations, unsupported features |
+| 21 | [WebAssembly](21-webassembly.md) | Building and running QuantoScript on WebAssembly |
 
 ---
 

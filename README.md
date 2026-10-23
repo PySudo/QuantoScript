@@ -27,6 +27,7 @@ Dynamic typing · `try`/`oops` exceptions · classes with shared identity · a t
 - [Execution Engines](#execution-engines)
 - [Compiled Bytecode (`.qvm`)](#compiled-bytecode-qvm)
 - [Native Compiler](#native-compiler)
+- [WebAssembly](#webassembly)
 - [Standard Library](#standard-library)
 - [Command-Line Interface](#command-line-interface)
 - [Package Manager](#package-manager)
@@ -265,6 +266,7 @@ The interpreter and the bytecode VM run the same source and produce identical ou
 | Tree-walk interpreter | `qs program.qs` | Development, debugging, quick scripts |
 | Bytecode VM | `qs vm program.qs` | Better runtime performance |
 | Native C compiler | `qs native program.qs` | ~10× speedup on arithmetic-heavy code |
+| WebAssembly | `qs wasm program.qs` | Running in Node.js or a WASM host |
 
 ---
 
@@ -301,6 +303,34 @@ gcc -O2 a_native.c -o program_native
 The native backend covers the whole language: numbers, strings, lists, maps, control
 flow, functions, classes, exceptions, imports, and comprehensions all compile ahead
 of time.
+
+---
+
+## WebAssembly
+
+QuantoScript also compiles to WebAssembly via [Emscripten](https://emscripten.org), so
+programs can run inside Node.js or any WASM host. A prebuilt runtime ships with the
+release, so you just run:
+
+```bash
+qs wasm program.qs                 # interpreter
+qs wasm vm program.qs              # bytecode VM
+qs wasm build program.qs -o out.qvm
+qs wasm run out.qvm
+
+qs wasm examples/wasm_demo.qs      # try the bundled demo
+```
+
+The `qs wasm` command needs a `node` executable (override with `QS_NODE`). It finds
+the runtime that ships in `<home>/wasm/`, so no build step is required. To rebuild
+the runtime from source, use `make wasm` (requires the Emscripten SDK so `emcc` is on
+`PATH`; override with `make EMCC=/path/to/emcc`).
+
+The language is identical; only the platform layer differs. Live networking, FFI,
+POSIX regex, and process spawning are unavailable in the sandbox and report a clear
+error. `make wasm-test` checks that every test and example matches the native
+binary. See [WebAssembly](docs/guide/21-webassembly.md) for details.
+
 
 ---
 
@@ -376,6 +406,8 @@ qs vm <file.qs|.qvm>        run with the bytecode VM (alias for run)
 qs build <file.qs> [-o out.qvm]   compile to .qvm bytecode
 qs native <file.qs>         emit native C (a_native.c)
 qs compile <file.qs> [out]  compile to a native binary
+qs wasm <file.qs>           run under WebAssembly via Node
+qs wasm vm <file.qs|.qvm>   run under WebAssembly with the bytecode VM
 qs init                     scaffold a new project
 qs check <file.qs>          validate syntax without executing
 qs fmt <file.qs>            format source code
@@ -471,6 +503,8 @@ The `Makefile` auto-detects OpenSSL (Homebrew on macOS, `pkg-config` elsewhere):
 ```bash
 make          # build build/qs
 make test     # build and run the regression suite
+make wasm     # build the WebAssembly runtime (needs Emscripten's emcc on PATH)
+make wasm-test # compare the wasm build against the native binary
 make clean    # remove build artifacts
 ```
 

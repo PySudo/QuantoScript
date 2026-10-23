@@ -857,6 +857,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  qs home               show QUANTO_HOME directory\n");
             fprintf(stderr, "  qs version            show version\n");
             fprintf(stderr, "  qs lsp                run the language server (stdio)\n");
+            fprintf(stderr, "  qs wasm <file.qs>     run under WebAssembly via Node\n");
             fprintf(stderr, "\nflags:\n");
             fprintf(stderr, "  --dump-bytecode  print compiled bytecode to stderr\n");
             fprintf(stderr, "  --trace          print per-instruction VM trace\n");
@@ -919,6 +920,45 @@ int main(int argc, char **argv) {
     if (cmd && strcmp(cmd, "home") == 0) {
         printf("%s\n", get_quanto_home());
         return 0;
+    }
+    if (cmd && strcmp(cmd, "wasm") == 0) {
+#if QS_WASM
+        fprintf(stderr, "wasm is not available inside the WebAssembly build itself\n");
+        return 1;
+#else
+        const char *loader = get_wasm_loader();
+        if (!loader[0]) {
+            fprintf(stderr, "Error: WebAssembly runtime not found.\n");
+            fprintf(stderr, "Build it with `make wasm` (requires the Emscripten SDK), or install a release.\n");
+            return 1;
+        }
+        const char *node = get_node_exe();
+
+        char command[16384];
+#if defined(_WIN32) && !QS_WASM
+        /* cmd.exe strips the outer quotes of a command that starts with a
+         * quoted program path, so wrap the whole line in an extra pair. */
+        snprintf(command, sizeof(command), "cmd /c \"\"%s\" \"%s\"", node, loader);
+#else
+        snprintf(command, sizeof(command), "\"%s\" \"%s\"", node, loader);
+#endif
+        int wasm_idx = -1;
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "wasm") == 0) { wasm_idx = i; break; }
+        }
+        for (int i = wasm_idx + 1; i < argc; i++) {
+            size_t used = strlen(command);
+            if (used + strlen(argv[i]) + 4 >= sizeof(command)) break;
+            strncat(command, " \"", sizeof(command) - strlen(command) - 1);
+            strncat(command, argv[i], sizeof(command) - strlen(command) - 1);
+            strncat(command, "\"", sizeof(command) - strlen(command) - 1);
+        }
+#if defined(_WIN32) && !QS_WASM
+        strncat(command, "\"", sizeof(command) - strlen(command) - 1);
+#endif
+        int rc = system(command);
+        return rc == -1 ? 1 : rc;
+#endif
     }
     if (cmd && strcmp(cmd, "version") == 0) {
         printf("QuantoScript %s\n", QS_VERSION);

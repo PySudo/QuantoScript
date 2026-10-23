@@ -14,7 +14,16 @@ qs                          # interactive REPL
 qs <file.qs>                # run with the tree-walk interpreter
 qs run <file.qs|.qvm>       # run with the bytecode VM
 qs vm <file.qs|.qvm>        # run with the bytecode VM (alias)
+qs wasm <file.qs>           # run under WebAssembly via Node
+qs wasm vm <file.qs|.qvm>   # run under WebAssembly with the bytecode VM
 ```
+
+`qs wasm` runs your program on the WebAssembly build that ships with QuantoScript.
+It finds the installed runtime and drives [Node.js](https://nodejs.org), which it
+looks up on `PATH` (override with the `QS_NODE` environment variable). Everything
+after `wasm` is forwarded to the WebAssembly runtime, so `qs wasm vm file.qs`,
+`qs wasm build file.qs -o out.qvm`, and `qs wasm run out.qvm` all work. See
+[WebAssembly](21-webassembly.md) for the platform's limits.
 
 ---
 
