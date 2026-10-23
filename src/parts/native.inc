@@ -599,7 +599,7 @@ static int url_char_is_safe(unsigned char c) {
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) return 1;
     switch (c) {
         case '-': case '.': case '_': case '~':
-        case '!': case '$': case '&': case '\'\0': case '(': case ')':
+        case '!': case '$': case '&': case '\'': case '(': case ')':
         case '*': case '+': case ',': case ';': case '=':
         case ':': case '@': case '/': case '?': case '%':
             return 1;
@@ -2602,10 +2602,10 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
         addr.sin_port = htons((unsigned short)port_number);
-        if (strcmp(host, "0.0.0.0") == 0 || host[0] == ' ') {
+        if (strcmp(host, "0.0.0.0") == 0 || host[0] == '\0') {
             addr.sin_addr.s_addr = htonl(INADDR_ANY);
         } else {
-            inet_pton(AF_INET, host, &addr.sin_addr);
+            addr.sin_addr.s_addr = inet_addr(host);
         }
         if (bind(listener, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
             qs_close_socket(listener);
@@ -2623,9 +2623,9 @@ static int call_builtin(Parser *parser, const char *name, CallArgList *args, Val
             char buf[8192];
             int n = recv(client, buf, sizeof(buf) - 1, 0);
             if (n <= 0) { qs_close_socket(client); continue; }
-            buf[n] = ' ';
+            buf[n] = '\0';
             char path[256];
-            path[0] = ' ';
+            path[0] = '\0';
             char *sp1 = strchr(buf, ' ');
             if (sp1) {
                 char *sp2 = strchr(sp1 + 1, ' ');
