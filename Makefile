@@ -20,7 +20,7 @@ LDFLAGS  ?=
 LIBS     ?=
 EMCC     ?= emcc
 
-VERSION  := 2.5.4
+VERSION  := 2.5.5
 SRC       = src/quanto.c
 PARTS     = $(wildcard src/parts/*.inc)
 EXE      :=

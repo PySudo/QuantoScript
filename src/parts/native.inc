@@ -2,6 +2,10 @@
 #include <Python.h>
 #endif
 
+#ifndef _WIN32
+#include <arpa/inet.h>
+#endif
+
 /* WebAssembly/WASI builds omit the network, TLS, websocket, and FFI
  * subsystems. Those builtins still exist but report a clear runtime error. */
 #if defined(QS_WASM) && QS_WASM
