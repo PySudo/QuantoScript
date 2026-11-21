@@ -63,6 +63,7 @@ func pell_window(index:int) {
          }
      }
      if printResult {
+         print("Number: ", num)
          print("Number of steps to reach 1: ", len(steps) - 1)
          print("Steps: ", steps)
      }
@@ -72,4 +73,4 @@ func pell_window(index:int) {
  print("Pell(5) = ", pell_naive(5))
  print("Pell(12) = ", pell_window(12))
  print(collatz(17))
- print(collatz(101, true))
+ collatz(101, true)
